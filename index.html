@@ -1,0 +1,1012 @@
+<title>Envelope</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+  :root {
+    --bg: #eef0f3;
+    --surface: #ffffff;
+    --surface-2: #f5f6f8;
+    --border: #d7dae0;
+    --ink: #171a21;
+    --muted: #666c78;
+    --faint: #9aa0ab;
+    --accent: #2b4de0;
+    --accent-ink: #ffffff;
+    --accent-soft: #e8ecfd;
+    --danger: #d43f2c;
+    --danger-soft: #fbe9e6;
+    --ok: #1f8a52;
+    --shadow: 0 1px 2px rgba(20, 24, 38, 0.04), 0 8px 24px -12px rgba(20, 24, 38, 0.18);
+  }
+  :root:not([data-theme="light"]) {
+    @media (prefers-color-scheme: dark) {
+      --bg: #14161c;
+      --surface: #1b1e26;
+      --surface-2: #21242e;
+      --border: #33374375;
+      --border: #333743;
+      --ink: #eceef2;
+      --muted: #9298a6;
+      --faint: #666c78;
+      --accent: #7c93ff;
+      --accent-ink: #10131c;
+      --accent-soft: #262c47;
+      --danger: #ff7a68;
+      --danger-soft: #3a2220;
+      --ok: #4fce8e;
+      --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 12px 30px -14px rgba(0,0,0,0.6);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #14161c;
+    --surface: #1b1e26;
+    --surface-2: #21242e;
+    --border: #333743;
+    --ink: #eceef2;
+    --muted: #9298a6;
+    --faint: #666c78;
+    --accent: #7c93ff;
+    --accent-ink: #10131c;
+    --accent-soft: #262c47;
+    --danger: #ff7a68;
+    --danger-soft: #3a2220;
+    --ok: #4fce8e;
+    --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 12px 30px -14px rgba(0,0,0,0.6);
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    min-height: 100vh;
+  }
+
+  .app {
+    max-width: 1180px;
+    margin: 0 auto;
+    padding: 28px 24px 64px;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+  }
+
+  header.top {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 16px;
+    flex-wrap: wrap;
+  }
+  .brand {
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+  }
+  .brand h1 {
+    font-family: "Fraunces", ui-serif, Georgia, serif;
+    font-size: 1.7rem;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    margin: 0;
+    text-wrap: balance;
+  }
+  .brand .ext {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: 0.72rem;
+    color: var(--accent);
+    background: var(--accent-soft);
+    padding: 2px 7px;
+    border-radius: 4px;
+    letter-spacing: 0.02em;
+  }
+  .brand .tag { color: var(--muted); font-size: 0.9rem; }
+
+  .actions { display: flex; gap: 8px; align-items: center; }
+
+  button {
+    font: inherit;
+    cursor: pointer;
+    border-radius: 7px;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--ink);
+    padding: 9px 14px;
+    font-size: 0.86rem;
+    font-weight: 500;
+    transition: background 0.12s ease, border-color 0.12s ease, transform 0.05s ease;
+  }
+  button:hover { border-color: var(--faint); }
+  button:active { transform: translateY(1px); }
+  button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  button:disabled { opacity: 0.45; cursor: not-allowed; }
+
+  button.primary {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: var(--accent-ink);
+  }
+  button.primary:hover { filter: brightness(1.06); }
+  button.ghost { background: transparent; }
+  button.danger-text { color: var(--danger); border-color: transparent; background: transparent; padding: 6px 8px; }
+  button.danger-text:hover { background: var(--danger-soft); }
+
+  input[type="file"] { display: none; }
+
+  .layout {
+    display: grid;
+    grid-template-columns: 300px 1fr;
+    gap: 20px;
+    align-items: start;
+  }
+  @media (max-width: 860px) {
+    .layout { grid-template-columns: 1fr; }
+  }
+
+  .panel {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    box-shadow: var(--shadow);
+  }
+
+  .dropzone {
+    padding: 28px 18px;
+    text-align: center;
+    border: 1.5px dashed var(--border);
+    border-radius: 12px;
+    background: var(--surface-2);
+    cursor: pointer;
+    transition: border-color 0.15s ease, background 0.15s ease;
+  }
+  .dropzone:hover, .dropzone.drag { border-color: var(--accent); background: var(--accent-soft); }
+  .dropzone .glyph {
+    width: 40px; height: 40px; margin: 0 auto 10px;
+    border-radius: 9px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    display: flex; align-items: center; justify-content: center;
+    color: var(--accent);
+  }
+  .dropzone .label { font-weight: 500; font-size: 0.92rem; }
+  .dropzone .sub { color: var(--muted); font-size: 0.78rem; margin-top: 4px; }
+
+  .sidebar-body { padding: 16px; display: flex; flex-direction: column; gap: 16px; }
+
+  .fileinfo { display: flex; flex-direction: column; gap: 6px; }
+  .fileinfo .name {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 0.82rem;
+    word-break: break-all;
+    color: var(--ink);
+  }
+  .fileinfo .meta { font-size: 0.76rem; color: var(--muted); }
+
+  .section-label {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 0.68rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--faint);
+    margin: 0 0 8px;
+  }
+
+  .attachlist { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+  .attachlist li {
+    display: flex; align-items: center; gap: 8px;
+    font-size: 0.8rem;
+    padding: 7px 9px;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 7px;
+  }
+  .attachlist .aname { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .attachlist .asize { color: var(--muted); font-family: "IBM Plex Mono", monospace; font-size: 0.72rem; }
+
+  .empty-state {
+    padding: 60px 24px;
+    text-align: center;
+    color: var(--muted);
+  }
+  .empty-state .glyph {
+    width: 56px; height: 56px; margin: 0 auto 16px;
+    border-radius: 14px;
+    background: var(--accent-soft);
+    color: var(--accent);
+    display: flex; align-items: center; justify-content: center;
+  }
+  .empty-state h2 {
+    font-family: "Fraunces", serif;
+    font-weight: 600;
+    font-size: 1.25rem;
+    color: var(--ink);
+    margin: 0 0 6px;
+  }
+  .empty-state p { max-width: 40ch; margin: 0 auto; font-size: 0.9rem; }
+
+  .editor { padding: 22px; display: flex; flex-direction: column; gap: 20px; }
+
+  .fields { display: grid; grid-template-columns: 84px 1fr; gap: 10px 12px; align-items: center; }
+  .fields label {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 0.72rem;
+    letter-spacing: 0.04em;
+    color: var(--muted);
+    text-transform: uppercase;
+  }
+  .fields input {
+    font: inherit;
+    font-size: 0.9rem;
+    padding: 8px 10px;
+    border-radius: 7px;
+    border: 1px solid var(--border);
+    background: var(--surface-2);
+    color: var(--ink);
+    width: 100%;
+  }
+  .fields input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; border-color: var(--accent); }
+
+  .divider { height: 1px; background: var(--border); }
+
+  .body-tabs { display: flex; gap: 4px; }
+  .body-tabs button {
+    padding: 6px 12px;
+    font-size: 0.8rem;
+    border-radius: 999px;
+  }
+  .body-tabs button.active {
+    background: var(--accent-soft);
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+
+  textarea {
+    font: inherit;
+    width: 100%;
+    min-height: 340px;
+    resize: vertical;
+    border-radius: 9px;
+    border: 1px solid var(--border);
+    background: var(--surface-2);
+    color: var(--ink);
+    padding: 14px;
+    font-size: 0.88rem;
+    line-height: 1.55;
+  }
+  textarea.mono { font-family: "IBM Plex Mono", monospace; font-size: 0.82rem; }
+  textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+  .toast {
+    position: fixed;
+    bottom: 22px; left: 50%;
+    transform: translateX(-50%) translateY(12px);
+    background: var(--ink);
+    color: var(--bg);
+    padding: 10px 18px;
+    border-radius: 8px;
+    font-size: 0.85rem;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.2s ease, transform 0.2s ease;
+    z-index: 50;
+  }
+  .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { transition: none !important; }
+  }
+</style>
+
+<div class="app">
+  <header class="top">
+    <div class="brand">
+      <h1>Envelope</h1>
+      <span class="ext">.eml editor</span>
+    </div>
+    <div class="actions" id="topActions" style="display:none;">
+      <button class="ghost" id="btnNew">New file</button>
+      <button class="primary" id="btnDownload">Save &amp; download .eml</button>
+    </div>
+  </header>
+
+  <div class="layout">
+    <aside class="panel sidebar-body" id="sidebar">
+      <div class="dropzone" id="dropzone">
+        <div class="glyph">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="M7 8l5-5 5 5"/><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>
+        </div>
+        <div class="label">Drop an .eml file</div>
+        <div class="sub">or click to browse</div>
+        <input type="file" id="fileInput" accept=".eml,message/rfc822">
+      </div>
+
+      <div id="fileMeta" style="display:none;">
+        <p class="section-label">Loaded file</p>
+        <div class="fileinfo">
+          <span class="name" id="fname">—</span>
+          <span class="meta" id="fmeta">—</span>
+        </div>
+      </div>
+
+      <div id="attachWrap" style="display:none;">
+        <p class="section-label">Attachments (kept on export)</p>
+        <ul class="attachlist" id="attachList"></ul>
+      </div>
+    </aside>
+
+    <main class="panel" id="mainPanel">
+      <div class="empty-state">
+        <div class="glyph">
+          <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/></svg>
+        </div>
+        <h2>No message open</h2>
+        <p>Load an .eml file to edit its headers and body, then export the result — nothing leaves your browser.</p>
+      </div>
+    </main>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+(function () {
+  const state = { headers: [], headerOrder: [], text: '', html: '', hasHtml: false, activeTab: 'text', attachments: [], originalName: 'message.eml' };
+
+  const dropzone = document.getElementById('dropzone');
+  const fileInput = document.getElementById('fileInput');
+  const mainPanel = document.getElementById('mainPanel');
+  const topActions = document.getElementById('topActions');
+  const fileMeta = document.getElementById('fileMeta');
+  const fname = document.getElementById('fname');
+  const fmeta = document.getElementById('fmeta');
+  const attachWrap = document.getElementById('attachWrap');
+  const attachList = document.getElementById('attachList');
+  const toast = document.getElementById('toast');
+
+  dropzone.addEventListener('click', () => fileInput.click());
+  dropzone.addEventListener('dragover', e => { e.preventDefault(); dropzone.classList.add('drag'); });
+  dropzone.addEventListener('dragleave', () => dropzone.classList.remove('drag'));
+  dropzone.addEventListener('drop', e => {
+    e.preventDefault();
+    dropzone.classList.remove('drag');
+    const f = e.dataTransfer.files[0];
+    if (f) loadFile(f);
+  });
+  fileInput.addEventListener('change', e => {
+    const f = e.target.files[0];
+    if (f) loadFile(f);
+  });
+
+  document.getElementById('btnNew').addEventListener('click', () => {
+    if (!confirm('Discard the current message and load a new one?')) return;
+    resetAll();
+  });
+  document.getElementById('btnDownload').addEventListener('click', downloadEml);
+
+  function showToast(msg) {
+    toast.textContent = msg;
+    toast.classList.add('show');
+    setTimeout(() => toast.classList.remove('show'), 1800);
+  }
+
+  function resetAll() {
+    state.headers = [];
+    state.headerOrder = [];
+    state.text = '';
+    state.html = '';
+    state.hasHtml = false;
+    state.attachments = [];
+    fileInput.value = '';
+    topActions.style.display = 'none';
+    fileMeta.style.display = 'none';
+    attachWrap.style.display = 'none';
+    mainPanel.innerHTML = `
+      <div class="empty-state">
+        <div class="glyph">
+          <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/></svg>
+        </div>
+        <h2>No message open</h2>
+        <p>Load an .eml file to edit its headers and body, then export the result — nothing leaves your browser.</p>
+      </div>`;
+  }
+
+  function loadFile(file) {
+    state.originalName = file.name.replace(/\.eml$/i, '') + '.eml';
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const bytes = new Uint8Array(reader.result);
+        const raw = bytesToBinaryString(bytes);
+        parseEml(raw);
+        renderEditor();
+        fname.textContent = file.name;
+        fmeta.textContent = formatBytes(file.size) + ' · loaded ' + new Date().toLocaleTimeString();
+        fileMeta.style.display = 'block';
+        topActions.style.display = 'flex';
+        showToast('Message loaded');
+      } catch (err) {
+        alert('Could not parse this file as a valid .eml message.\n\n' + err.message);
+      }
+    };
+    reader.readAsArrayBuffer(file);
+  }
+
+  // A "binary string" holds one byte per char code (0-255) — safe for
+  // splitting on ASCII boundaries/headers while preserving raw bytes for
+  // later charset-aware decoding.
+  function bytesToBinaryString(bytes) {
+    let s = '';
+    const chunk = 0x8000;
+    for (let i = 0; i < bytes.length; i += chunk) {
+      s += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+    }
+    return s;
+  }
+  function binaryStringToBytes(str) {
+    const bytes = new Uint8Array(str.length);
+    for (let i = 0; i < str.length; i++) bytes[i] = str.charCodeAt(i) & 0xff;
+    return bytes;
+  }
+  function normalizeCharset(name) {
+    if (!name) return 'utf-8';
+    const n = name.trim().toLowerCase().replace(/^"|"$/g, '');
+    if (n === 'us-ascii' || n === 'ascii') return 'windows-1252';
+    return n;
+  }
+  function decodeBytes(bytes, charset) {
+    try { return new TextDecoder(normalizeCharset(charset), { fatal: false }).decode(bytes); }
+    catch (e) { return new TextDecoder('utf-8', { fatal: false }).decode(bytes); }
+  }
+
+  // Decode RFC 2047 encoded-words in header values, e.g. =?TIS-620?B?...?=
+  function decodeMimeWords(value) {
+    if (!value || value.indexOf('=?') === -1) return value;
+    return value.replace(/=\?([^?]+)\?([bBqQ])\?([^?]*)\?=(?:\s+(?==\?))?/g, (m, charset, enc, text) => {
+      try {
+        if (enc.toLowerCase() === 'b') {
+          return decodeBytes(binaryStringToBytes(atob(text.replace(/\s+/g, ''))), charset);
+        }
+        const qp = text.replace(/_/g, ' ').replace(/=([0-9A-Fa-f]{2})/g, (_, h) => String.fromCharCode(parseInt(h, 16)));
+        return decodeBytes(binaryStringToBytes(qp), charset);
+      } catch (e) { return m; }
+    });
+  }
+
+  function formatBytes(n) {
+    if (n < 1024) return n + ' B';
+    if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB';
+    return (n / (1024 * 1024)).toFixed(1) + ' MB';
+  }
+
+  // ---------- MIME parsing (headers + text/html parts + attachment listing) ----------
+
+  function splitHeadersBody(raw) {
+    const idx = raw.search(/\r?\n\r?\n/);
+    if (idx === -1) return { headerBlock: raw, body: '' };
+    const m = raw.match(/\r?\n\r?\n/);
+    return { headerBlock: raw.slice(0, idx), body: raw.slice(idx + m[0].length) };
+  }
+
+  function unfoldHeaders(block) {
+    const lines = block.split(/\r?\n/);
+    const unfolded = [];
+    for (const line of lines) {
+      if (/^[ \t]/.test(line) && unfolded.length) {
+        unfolded[unfolded.length - 1] += ' ' + line.trim();
+      } else if (line.trim() !== '') {
+        unfolded.push(line);
+      }
+    }
+    return unfolded.map(line => {
+      const i = line.indexOf(':');
+      if (i === -1) return { name: line, value: '' };
+      return { name: line.slice(0, i), value: line.slice(i + 1).trim() };
+    });
+  }
+
+  function getHeader(headers, name) {
+    const h = headers.find(h => h.name.toLowerCase() === name.toLowerCase());
+    return h ? h.value : '';
+  }
+
+  function decodeQP(str) {
+    return str.replace(/=\r?\n/g, '').replace(/=([0-9A-Fa-f]{2})/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)));
+  }
+
+  function parseMimePart(raw, depth) {
+    const { headerBlock, body } = splitHeadersBody(raw);
+    const headers = unfoldHeaders(headerBlock);
+    const ctype = getHeader(headers, 'Content-Type') || 'text/plain';
+    const cte = (getHeader(headers, 'Content-Transfer-Encoding') || '').toLowerCase();
+    const disp = getHeader(headers, 'Content-Disposition') || '';
+    const typeMatch = ctype.match(/^\s*([^;]+)/);
+    const mime = typeMatch ? typeMatch[1].trim().toLowerCase() : 'text/plain';
+    const boundaryMatch = ctype.match(/boundary="?([^";]+)"?/i);
+
+    if (mime.startsWith('multipart/') && boundaryMatch && depth < 8) {
+      const boundary = boundaryMatch[1];
+      const parts = body.split('--' + boundary).slice(1, -1).map(p => p.replace(/^\r?\n/, ''));
+      const results = { text: '', html: '', attachments: [] };
+      for (const p of parts) {
+        const sub = parseMimePart(p, depth + 1);
+        if (!results.text && sub.text) results.text = sub.text;
+        if (!results.html && sub.html) results.html = sub.html;
+        results.attachments = results.attachments.concat(sub.attachments);
+      }
+      return results;
+    }
+
+    const nameMatch = disp.match(/filename\*?="?([^";]+)"?/i) || ctype.match(/name\*?="?([^";]+)"?/i);
+    const isAttachment = /attachment/i.test(disp) || (nameMatch && !mime.startsWith('text/'));
+
+    if (isAttachment) {
+      const filename = decodeMimeWords(nameMatch ? nameMatch[1] : 'attachment');
+      let size = body.length;
+      if (cte === 'base64') size = Math.floor(body.replace(/\s+/g, '').length * 3 / 4);
+      // Keep the exact original bytes (headers + body, untouched) so the
+      // attachment can be reinserted byte-for-byte on export.
+      return { text: '', html: '', attachments: [{ filename, mime, size, raw }] };
+    }
+
+    const charsetMatch = ctype.match(/charset\s*=\s*"?([^";]+)"?/i);
+    const charset = charsetMatch ? charsetMatch[1] : 'utf-8';
+
+    // `body` is a binary string (one char per byte); recover raw bytes,
+    // undo the transfer encoding at the byte level, then decode text
+    // with the part's own declared charset.
+    let byteStr = body;
+    if (cte === 'quoted-printable') byteStr = decodeQP(body);
+    else if (cte === 'base64') { try { byteStr = atob(body.replace(/\s+/g, '')); } catch (e) { byteStr = ''; } }
+
+    const decoded = decodeBytes(binaryStringToBytes(byteStr), charset);
+
+    if (mime === 'text/html') return { text: '', html: decoded.trim(), attachments: [] };
+    return { text: decoded.trim(), html: '', attachments: [] };
+  }
+
+  function parseEml(raw) {
+    const { headerBlock, body } = splitHeadersBody(raw);
+    const headers = unfoldHeaders(headerBlock);
+    const parsed = parseMimePart(raw, 0);
+
+    state.headerOrder = ['From', 'To', 'Cc', 'Subject', 'Date', 'Reply-To'];
+    state.headers = {};
+    for (const name of state.headerOrder) {
+      state.headers[name] = decodeMimeWords(getHeader(headers, name));
+    }
+    // Content-Type/MIME-Version/CTE are regenerated at export time to
+    // match the (possibly changed) body structure — never carry the
+    // originals through, or the message ends up with duplicate/mismatched
+    // MIME headers that break parsing.
+    // Message-ID is also regenerated on export: keeping the original would
+    // make Outlook desktop (and similar mailbox-synced clients) match this
+    // file to the real message already in the mailbox and render THAT
+    // synced copy instead of the edited file's actual content.
+    const managedHeaders = state.headerOrder.concat(['Content-Type', 'MIME-Version', 'Content-Transfer-Encoding', 'Message-ID']);
+    // Transport/anti-spam headers (Received chain, DKIM/ARC signatures,
+    // Authentication-Results, provider X- headers) describe the delivery
+    // of the ORIGINAL message. Once the content is edited those
+    // signatures no longer verify and the Received chain is fictional —
+    // worse, some mail clients (Outlook's local MIME parser in
+    // particular) choke on the sheer volume/line-length of these headers
+    // and fail to render the body/attachments at all. Drop them.
+    const isTransportHeader = name => /^(x-|received$|received-spf|return-path|delivered-to|arc-|dkim-signature|domainkey-signature|authentication-results)/i.test(name.trim());
+    state.extraHeaders = headers
+      .filter(h => !managedHeaders.some(n => n.toLowerCase() === h.name.toLowerCase()))
+      .filter(h => !isTransportHeader(h.name))
+      .map(h => ({ name: h.name, value: decodeMimeWords(h.value) }));
+
+    state.text = parsed.text;
+    state.html = parsed.html;
+    state.hasHtml = !!parsed.html;
+    state.activeTab = state.hasHtml ? 'html' : 'text';
+    state.attachments = parsed.attachments;
+    // Baseline for auto-syncing Plain text edits into the HTML version on
+    // export (see syncTextEditIntoHtml). Rebased after each successful
+    // sync so repeated exports don't insert the same edit twice.
+    state.originalText = state.text;
+    state.htmlDirty = false;
+
+    renderAttachments();
+  }
+
+  function renderAttachments() {
+    if (!state.attachments.length) { attachWrap.style.display = 'none'; return; }
+    attachWrap.style.display = 'block';
+    attachList.innerHTML = state.attachments.map(a => `
+      <li>
+        <span class="aname" title="${escapeHtml(a.filename)}">${escapeHtml(a.filename)}</span>
+        <span class="asize">${formatBytes(a.size)}</span>
+      </li>`).join('');
+  }
+
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  }
+
+  // ---------- Editor rendering ----------
+
+  function renderEditor() {
+    const h = state.headers;
+    mainPanel.innerHTML = `
+      <div class="editor">
+        <div class="fields" id="fieldsGrid">
+          <label for="f-from">From</label>
+          <input id="f-from" value="${escapeAttr(h.From)}" placeholder="Jane Doe <jane@example.com>">
+          <label for="f-to">To</label>
+          <input id="f-to" value="${escapeAttr(h.To)}" placeholder="recipient@example.com">
+          <label for="f-cc">Cc</label>
+          <input id="f-cc" value="${escapeAttr(h.Cc)}" placeholder="">
+          <label for="f-subject">Subject</label>
+          <input id="f-subject" value="${escapeAttr(h.Subject)}" placeholder="Subject line">
+          <label for="f-date">Date</label>
+          <input id="f-date" value="${escapeAttr(h.Date)}" placeholder="Mon, 1 Jan 2026 09:00:00 +0000">
+          <label for="f-replyto">Reply-To</label>
+          <input id="f-replyto" value="${escapeAttr(h['Reply-To'])}" placeholder="">
+        </div>
+
+        <div class="divider"></div>
+
+        <div>
+          <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:10px; gap:12px; flex-wrap:wrap;">
+            <p class="section-label" style="margin:0;">Message body</p>
+            <div style="display:flex; align-items:center; gap:8px;">
+              ${state.hasHtml && state.activeTab === 'text' ? `<button class="ghost" id="btnSyncHtml" style="padding:6px 12px; font-size:0.8rem;" ${state.text === state.originalText ? 'disabled' : ''}>Update HTML</button>` : ''}
+              <div class="body-tabs">
+                <button data-tab="text" class="${state.activeTab === 'text' ? 'active' : ''}">Plain text</button>
+                <button data-tab="html" class="${state.activeTab === 'html' ? 'active' : ''}">HTML</button>
+              </div>
+            </div>
+          </div>
+          ${state.hasHtml && state.text ? `<p style="font-size:0.8rem; color:var(--muted); margin:-4px 0 10px;">This message has both a Plain text and an HTML version. Most email apps show the HTML version by default — click "Update HTML" (or Save &amp; download does it automatically) so your change appears everywhere.</p>` : ''}
+          <textarea id="bodyText" class="${state.activeTab === 'html' ? 'mono' : ''}" spellcheck="false">${escapeHtml(state.activeTab === 'html' ? state.html : state.text)}</textarea>
+        </div>
+      </div>
+    `;
+
+    document.querySelectorAll('.body-tabs button').forEach(btn => {
+      btn.addEventListener('click', () => switchTab(btn.dataset.tab));
+    });
+    document.getElementById('bodyText').addEventListener('input', e => {
+      if (state.activeTab === 'html') { state.html = e.target.value; state.htmlDirty = true; }
+      else {
+        state.text = e.target.value;
+        const btn = document.getElementById('btnSyncHtml');
+        if (btn) btn.disabled = (state.text === state.originalText);
+      }
+    });
+    const syncBtn = document.getElementById('btnSyncHtml');
+    if (syncBtn) {
+      syncBtn.addEventListener('click', () => {
+        const ta = document.getElementById('bodyText');
+        if (ta) state.text = ta.value;
+        if (state.htmlDirty && !confirm('You already edited the HTML tab by hand. Overwrite it by re-syncing from Plain text?')) return;
+        const ok = syncTextEditIntoHtml();
+        if (ok) {
+          state.htmlDirty = false;
+          renderEditor();
+          showToast('HTML updated to match your Plain text edit');
+        } else {
+          showToast('Nothing to sync');
+        }
+      });
+    }
+    ['from', 'to', 'cc', 'subject', 'date', 'replyto'].forEach(key => {
+      const el = document.getElementById('f-' + key);
+      const headerName = key === 'replyto' ? 'Reply-To' : key[0].toUpperCase() + key.slice(1);
+      el.addEventListener('input', () => { state.headers[headerName] = el.value; });
+    });
+  }
+
+  function switchTab(tab) {
+    if (tab === state.activeTab) return;
+    const ta = document.getElementById('bodyText');
+    if (state.activeTab === 'html') state.html = ta.value; else state.text = ta.value;
+    state.activeTab = tab;
+    if (tab === 'html' && !state.html) state.html = textToHtml(state.text);
+    if (tab === 'text' && !state.text) state.text = htmlToText(state.html);
+    renderEditor();
+  }
+
+  function textToHtml(t) {
+    return '<html><body><p>' + escapeHtml(t).replace(/\n/g, '<br>') + '</p></body></html>';
+  }
+  function htmlToText(h) {
+    const div = document.createElement('div');
+    div.innerHTML = h;
+    return div.textContent || div.innerText || '';
+  }
+
+  function escapeAttr(s) { return escapeHtml(s || ''); }
+
+  // ---------- Auto-sync a Plain text edit into the HTML version ----------
+  // Most clients render HTML over plain text when both exist, so a
+  // change made only in the Plain text tab would otherwise be invisible.
+  // This locates where the edited text differs from the original, finds
+  // the matching spot in the HTML by anchoring on the unchanged text
+  // right before/after it, and inserts the new content there.
+
+  function commonPrefixLen(a, b) {
+    const max = Math.min(a.length, b.length);
+    let i = 0;
+    while (i < max && a[i] === b[i]) i++;
+    return i;
+  }
+  function commonSuffixLen(a, b, limitA, limitB) {
+    const max = Math.min(limitA, limitB);
+    let i = 0;
+    while (i < max && a[a.length - 1 - i] === b[b.length - 1 - i]) i++;
+    return i;
+  }
+  function getTextNodesFlat(root) {
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    const nodes = [];
+    let flat = '';
+    let n;
+    while ((n = walker.nextNode())) {
+      nodes.push({ node: n, start: flat.length });
+      flat += n.textContent;
+    }
+    return { nodes, flat };
+  }
+  function findNodeAtFlatIndex(nodes, index) {
+    for (let i = nodes.length - 1; i >= 0; i--) {
+      if (index >= nodes[i].start) return nodes[i].node;
+    }
+    return null;
+  }
+  function blockAncestor(node, root) {
+    let el = node.nodeType === 3 ? node.parentElement : node;
+    while (el && el.parentElement && el !== root && !/^(DIV|P|TD|TABLE|LI|BLOCKQUOTE)$/.test(el.tagName)) {
+      el = el.parentElement;
+    }
+    return el;
+  }
+
+  function syncTextEditIntoHtml() {
+    const oldText = state.originalText || '';
+    const newText = state.text || '';
+    if (oldText === newText || !state.html) return false;
+
+    const prefixLen = commonPrefixLen(oldText, newText);
+    const suffixLen = commonSuffixLen(oldText, newText, oldText.length - prefixLen, newText.length - prefixLen);
+    const oldMiddle = oldText.slice(prefixLen, oldText.length - suffixLen);
+    const newMiddle = newText.slice(prefixLen, newText.length - suffixLen);
+    if (oldMiddle === newMiddle || !newMiddle.trim()) return false;
+
+    const container = document.createElement('div');
+    container.innerHTML = state.html;
+    const { nodes, flat } = getTextNodesFlat(container);
+
+    const ANCHOR_LEN = 30;
+    const anchorBefore = oldText.slice(0, prefixLen).trim().slice(-ANCHOR_LEN);
+    const anchorAfter = oldText.slice(oldText.length - suffixLen).trim().slice(0, ANCHOR_LEN);
+
+    let insertAfterNode = null, insertBeforeNode = null;
+    if (anchorBefore) {
+      const idx = flat.lastIndexOf(anchorBefore);
+      if (idx !== -1) insertAfterNode = findNodeAtFlatIndex(nodes, idx + anchorBefore.length - 1);
+    }
+    if (!insertAfterNode && anchorAfter) {
+      const idx = flat.indexOf(anchorAfter);
+      if (idx !== -1) insertBeforeNode = findNodeAtFlatIndex(nodes, idx);
+    }
+
+    const paragraphs = newMiddle.split(/\n{2,}/).map(p => p.trim()).filter(Boolean);
+    if (!paragraphs.length) return false;
+    const wrapper = document.createElement('div');
+    wrapper.innerHTML = paragraphs.map(p => '<div>' + escapeHtml(p).replace(/\n/g, '<br>') + '</div>').join('');
+    const newNodes = Array.from(wrapper.childNodes);
+
+    if (insertAfterNode) {
+      const anchorEl = blockAncestor(insertAfterNode, container);
+      const parent = (anchorEl && anchorEl.parentNode) || container;
+      const ref = anchorEl ? anchorEl.nextSibling : null;
+      newNodes.forEach(n => parent.insertBefore(n, ref));
+    } else if (insertBeforeNode) {
+      const anchorEl = blockAncestor(insertBeforeNode, container);
+      const parent = (anchorEl && anchorEl.parentNode) || container;
+      newNodes.forEach(n => parent.insertBefore(n, anchorEl));
+    } else {
+      newNodes.forEach(n => container.appendChild(n));
+    }
+
+    state.html = container.innerHTML;
+    state.originalText = state.text; // rebase so re-exporting doesn't duplicate
+    return true;
+  }
+
+  // ---------- Export ----------
+
+  // RFC 2047: each encoded-word (delimiters included) must be <= 75 chars.
+  // "=?UTF-8?B?" + "?=" is 12 chars, leaving 63 for base64 -> 63 - (63%4)
+  // = 60 base64 chars -> 45 source bytes per word, max.
+  function encodeWordsChunked(str, maxBytesPerWord) {
+    maxBytesPerWord = maxBytesPerWord || 45;
+    const enc = new TextEncoder();
+    const chunks = [];
+    let cur = '', curBytes = 0;
+    for (const ch of str) {
+      const b = enc.encode(ch).length;
+      if (curBytes + b > maxBytesPerWord && cur) { chunks.push(cur); cur = ''; curBytes = 0; }
+      cur += ch;
+      curBytes += b;
+    }
+    if (cur) chunks.push(cur);
+    return chunks.map(c => {
+      const bytes = enc.encode(c);
+      let bin = '';
+      bytes.forEach(b => { bin += String.fromCharCode(b); });
+      return '=?UTF-8?B?' + btoa(bin) + '?=';
+    });
+  }
+  function encodePhrase(str) {
+    if (!/[^\x00-\x7f]/.test(str)) return str;
+    return encodeWordsChunked(str).join('\r\n ');
+  }
+  // Only the display-name portion of an address is encoded; the
+  // <email@addr> part must stay literal ASCII for clients to parse it.
+  function encodeAddressList(value) {
+    if (!/[^\x00-\x7f]/.test(value)) return value;
+    const parts = [];
+    let depth = 0, cur = '';
+    for (const ch of value) {
+      if (ch === '<') depth++;
+      if (ch === '>') depth = Math.max(0, depth - 1);
+      if (ch === ',' && depth === 0) { parts.push(cur); cur = ''; }
+      else cur += ch;
+    }
+    if (cur.trim()) parts.push(cur);
+    return parts.map(part => {
+      const trimmed = part.trim();
+      const m = trimmed.match(/^(.*?)\s*<([^>]+)>$/);
+      if (m) {
+        const name = m[1].trim().replace(/^"(.*)"$/, '$1');
+        const email = m[2].trim();
+        if (!name) return '<' + email + '>';
+        return /[^\x00-\x7f]/.test(name) ? encodePhrase(name) + ' <' + email + '>' : name + ' <' + email + '>';
+      }
+      return encodePhrase(trimmed);
+    }).join(',\r\n ');
+  }
+  function encodeHeaderValue(name, value) {
+    if (!value || !/[^\x00-\x7f]/.test(value)) return value;
+    const addressHeaders = ['from', 'to', 'cc', 'bcc', 'reply-to'];
+    return addressHeaders.includes(name.toLowerCase()) ? encodeAddressList(value) : encodePhrase(value);
+  }
+  function foldHeader(name, value) {
+    return name + ': ' + encodeHeaderValue(name, value);
+  }
+
+  async function downloadEml() {
+    const ta = document.getElementById('bodyText');
+    if (ta) {
+      if (state.activeTab === 'html') { state.html = ta.value; state.htmlDirty = true; }
+      else state.text = ta.value;
+    }
+
+    let syncedNote = '';
+    if (state.hasHtml && !state.htmlDirty) {
+      const synced = syncTextEditIntoHtml();
+      if (synced) {
+        if (state.activeTab === 'html') renderEditor();
+        syncedNote = ' (synced into HTML too)';
+      }
+    }
+
+    const lines = [];
+    state.headerOrder.forEach(name => {
+      if (state.headers[name]) lines.push(foldHeader(name, state.headers[name]));
+    });
+    (state.extraHeaders || []).forEach(h => {
+      if (h.name.trim()) lines.push(foldHeader(h.name, h.value));
+    });
+    lines.push('Message-ID: <' + Date.now().toString(36) + '.' + Math.random().toString(36).slice(2) + '@envelope.local>');
+
+    const hasText = !!state.text;
+    const hasHtml = !!state.html;
+    const hasAttachments = state.attachments.length > 0;
+
+    // Build the message content (text and/or html) as a standalone block:
+    // either its own top-level part, or wrapped in multipart/alternative
+    // if there's a header to prepend to (attachments present) or both
+    // flavors exist.
+    let contentHeaders, contentBody;
+    if (hasText && hasHtml) {
+      const altBoundary = 'envelope-alt-' + Math.random().toString(36).slice(2);
+      contentHeaders = 'Content-Type: multipart/alternative; boundary="' + altBoundary + '"';
+      contentBody = '--' + altBoundary + '\r\n'
+        + 'Content-Type: text/plain; charset="utf-8"\r\n\r\n' + state.text + '\r\n\r\n'
+        + '--' + altBoundary + '\r\n'
+        + 'Content-Type: text/html; charset="utf-8"\r\n\r\n' + state.html + '\r\n\r\n'
+        + '--' + altBoundary + '--';
+    } else if (hasHtml) {
+      contentHeaders = 'Content-Type: text/html; charset="utf-8"';
+      contentBody = state.html;
+    } else {
+      contentHeaders = 'Content-Type: text/plain; charset="utf-8"';
+      contentBody = state.text || '';
+    }
+
+    // Assemble as Blob parts rather than one big string: attachment bytes
+    // (`a.raw` is a binary string — one char per original byte) must be
+    // written back as raw bytes, not re-encoded as UTF-8 text, or any
+    // byte >127 in them would be corrupted (doubled) by string-to-UTF-8
+    // conversion. Header/text segments are genuine text and are safe to
+    // hand to Blob as plain strings.
+    const parts = [];
+    if (hasAttachments) {
+      const mixBoundary = 'envelope-mix-' + Math.random().toString(36).slice(2);
+      lines.push('MIME-Version: 1.0');
+      lines.push('Content-Type: multipart/mixed; boundary="' + mixBoundary + '"');
+      parts.push(lines.join('\r\n') + '\r\n\r\n');
+      parts.push('--' + mixBoundary + '\r\n' + contentHeaders + '\r\n\r\n' + contentBody + '\r\n\r\n');
+      state.attachments.forEach(a => {
+        parts.push('--' + mixBoundary + '\r\n');
+        parts.push(binaryStringToBytes(a.raw));
+        parts.push('\r\n\r\n');
+      });
+      parts.push('--' + mixBoundary + '--\r\n');
+    } else {
+      lines.push('MIME-Version: 1.0');
+      lines.push(contentHeaders);
+      parts.push(lines.join('\r\n') + '\r\n\r\n' + contentBody);
+    }
+    const blob = new Blob(parts, { type: 'message/rfc822' });
+
+    // Outside the Artifact viewer sandbox (e.g. this file opened directly
+    // in a browser) a plain anchor download works fine and keeps the real
+    // .eml extension — use that path whenever it's available.
+    if (!window.__downloadsNS) {
+      try {
+        downloadViaAnchor(blob, state.originalName);
+        showToast('Saved ' + state.originalName + syncedNote);
+        return;
+      } catch (e) { /* fall through to capability path below */ }
+    }
+
+    const downloads = window.__downloadsNS || null;
+    if (!downloads) { showToast('Download is not available in this view'); return; }
+    try {
+      await downloads.save({ filename: state.originalName, data: blob });
+      showToast('Saved ' + state.originalName + syncedNote);
+    } catch (err) {
+      if (err && err.code === 'rejected_extension') {
+        try {
+          await downloads.save({ filename: state.originalName.replace(/\.eml$/i, '.txt'), data: blob });
+          showToast('Saved as .txt (rename to .eml after downloading)');
+        } catch (err2) {
+          showToast(err2.code === 'declined' ? 'Download cancelled' : 'Could not save the file');
+        }
+      } else if (err && err.code === 'declined') {
+        showToast('Download cancelled');
+      } else {
+        showToast('Could not save the file');
+      }
+    }
+  }
+
+  function downloadViaAnchor(blob, filename) {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
+  (async function initDownloads() {
+    try {
+      window.__downloadsNS = (window.claude && typeof window.claude.use === 'function')
+        ? await window.claude.use('downloads')
+        : null;
+    } catch (e) {
+      window.__downloadsNS = null;
+    }
+  })();
+})();
+</script>
