@@ -721,12 +721,21 @@
 
   function escapeAttr(s) { return escapeHtml(s || ''); }
 
-  // ---------- Auto-sync a Plain text edit into the HTML version ----------
-  // Most clients render HTML over plain text when both exist, so a
-  // change made only in the Plain text tab would otherwise be invisible.
-  // This locates where the edited text differs from the original, finds
-  // the matching spot in the HTML by anchoring on the unchanged text
-  // right before/after it, and inserts the new content there.
+  // ==== SYNC-CORE-START ====
+  // ---------- Replay a Plain text edit into the HTML version ----------
+  // A message that carries both parts is shown by its HTML one in nearly
+  // every mail client, so an edit made only in the Plain text tab is
+  // never seen unless it is replayed into the HTML.
+  //
+  // How it works: diff the old and new plain text, widened out to whole
+  // lines, then find that same place in the HTML by matching the
+  // unchanged lines on either side of the edit. Matching runs against a
+  // flattened, whitespace-normalized view of the HTML that remembers the
+  // DOM position behind every character, so the edit is applied as a real
+  // DOM range instead of by string surgery.
+
+  const SYNC_BLOCK_TAGS = /^(ADDRESS|ARTICLE|ASIDE|BLOCKQUOTE|DD|DIV|DL|DT|FIELDSET|FIGCAPTION|FIGURE|FOOTER|FORM|H[1-6]|HEADER|HR|LI|MAIN|NAV|OL|P|PRE|SECTION|TABLE|TBODY|TD|TFOOT|TH|THEAD|TR|UL)$/;
+  const SYNC_SKIP_TAGS = /^(SCRIPT|STYLE|HEAD|META|LINK|TITLE)$/;
 
   function commonPrefixLen(a, b) {
     const max = Math.min(a.length, b.length);
@@ -740,83 +749,286 @@
     while (i < max && a[a.length - 1 - i] === b[b.length - 1 - i]) i++;
     return i;
   }
-  function getTextNodesFlat(root) {
-    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
-    const nodes = [];
-    let flat = '';
-    let n;
-    while ((n = walker.nextNode())) {
-      nodes.push({ node: n, start: flat.length });
-      flat += n.textContent;
-    }
-    return { nodes, flat };
+
+  // Collapse every whitespace run (&nbsp; included) to a single space,
+  // the way a browser renders it, so plain-text anchors and HTML text
+  // compare character for character.
+  function normalizeInline(s) {
+    return s.replace(/[\s\u00a0]+/g, ' ').trim();
   }
-  function findNodeAtFlatIndex(nodes, index) {
-    for (let i = nodes.length - 1; i >= 0; i--) {
-      if (index >= nodes[i].start) return nodes[i].node;
+
+  // Widen the raw character diff out to whole lines. A diff that starts
+  // or ends mid-line produces anchors containing line breaks, which match
+  // nothing, and inserts half-lines where a full one was meant.
+  function diffLineRegion(oldText, newText) {
+    let start = commonPrefixLen(oldText, newText);
+    while (start > 0 && oldText[start - 1] !== '\n') start--;
+
+    const suffix = commonSuffixLen(oldText, newText, oldText.length - start, newText.length - start);
+    let oldEnd = oldText.length - suffix;
+    while (oldEnd > 0 && oldEnd < oldText.length && oldText[oldEnd - 1] !== '\n') oldEnd++;
+    const newEnd = newText.length - (oldText.length - oldEnd);
+
+    return {
+      start: start,
+      oldEnd: oldEnd,
+      oldMiddle: oldText.slice(start, oldEnd),
+      newMiddle: newText.slice(start, newEnd)
+    };
+  }
+
+  // Build a match anchor from the whole lines next to the edit. A short
+  // line ("Jack,") recurs all through a quoted thread, so keep adding
+  // neighbouring lines until the anchor is distinctive enough to trust.
+  function buildAnchor(text, fromEnd) {
+    const lines = text.split('\n').filter(l => l.trim() !== '');
+    const picked = [];
+    let anchor = '';
+    for (let i = 0; i < lines.length && i < 3; i++) {
+      const line = fromEnd ? lines[lines.length - 1 - i] : lines[i];
+      if (fromEnd) picked.unshift(line); else picked.push(line);
+      anchor = normalizeInline(picked.join(' '));
+      if (anchor.length >= 25) break;
+    }
+    return anchor;
+  }
+
+  // Flatten HTML into text as it reads on screen, recording the DOM
+  // position behind every character. Block edges and <br> become "\n", so
+  // a line break in the plain-text part lines up with a real break in the
+  // HTML rather than fusing two lines into one unmatchable string.
+  function flattenHtml(root) {
+    let flat = '';
+    const map = [];
+
+    function pushChar(ch, node, offset) {
+      if (ch === ' ') {
+        const prev = flat.length ? flat[flat.length - 1] : '';
+        if (prev === '' || prev === ' ' || prev === '\n') return;
+      } else if (ch === '\n') {
+        while (flat.length && flat[flat.length - 1] === ' ') {
+          flat = flat.slice(0, -1);
+          map.pop();
+        }
+        const prev = flat.length ? flat[flat.length - 1] : '';
+        if (prev === '' || prev === '\n') return;
+      }
+      flat += ch;
+      map.push(ch === '\n' ? null : { node: node, offset: offset });
+    }
+
+    (function walk(node) {
+      for (let child = node.firstChild; child; child = child.nextSibling) {
+        if (child.nodeType === 3) {
+          const text = child.nodeValue;
+          for (let i = 0; i < text.length; i++) {
+            const c = text[i];
+            pushChar(/[\s\u00a0]/.test(c) ? ' ' : c, child, i);
+          }
+        } else if (child.nodeType === 1) {
+          const tag = child.tagName;
+          if (SYNC_SKIP_TAGS.test(tag)) continue;
+          if (tag === 'BR') { pushChar('\n'); continue; }
+          const isBlock = SYNC_BLOCK_TAGS.test(tag);
+          if (isBlock) pushChar('\n');
+          walk(child);
+          if (isBlock) pushChar('\n');
+        }
+      }
+    })(root);
+
+    return { flat: flat, map: map };
+  }
+
+  function allIndexesOf(hay, needle) {
+    const out = [];
+    if (!needle) return out;
+    let i = hay.indexOf(needle);
+    while (i !== -1) { out.push(i); i = hay.indexOf(needle, i + 1); }
+    return out;
+  }
+
+  // Find the stretch of flattened HTML that the edit belongs in. Both
+  // anchors are matched and the closest valid pair wins, which keeps the
+  // edit out of the quoted copy of the same text further down a thread.
+  function locateRegion(flat, beforeAnchor, afterAnchor) {
+    const search = flat.replace(/\n/g, ' '); // same length, so indexes still line up
+    const befores = allIndexesOf(search, beforeAnchor).map(i => i + beforeAnchor.length);
+    const afters = allIndexesOf(search, afterAnchor);
+
+    if (beforeAnchor && afterAnchor && befores.length && afters.length) {
+      let best = null;
+      for (const b of befores) {
+        for (const a of afters) {
+          if (a < b) continue;
+          if (!best || a - b < best.end - best.start) best = { start: b, end: a };
+        }
+      }
+      if (best) return best;
+    }
+    // Only one side matched: insert at that point, but never delete a
+    // range whose far end could not be located.
+    if (beforeAnchor && befores.length) {
+      // No anchor after the edit means it runs to the end of the message,
+      // so bind to the LAST copy of the preceding text — binding to the
+      // first one would drop the edit into the middle of the message.
+      const start = afterAnchor ? befores[0] : befores[befores.length - 1];
+      return { start: start, end: afterAnchor ? start : flat.length };
+    }
+    if (afters.length) {
+      return { start: beforeAnchor ? afters[0] : 0, end: afters[0] };
     }
     return null;
   }
-  function blockAncestor(node, root) {
-    let el = node.nodeType === 3 ? node.parentElement : node;
-    while (el && el.parentElement && el !== root && !/^(DIV|P|TD|TABLE|LI|BLOCKQUOTE)$/.test(el.tagName)) {
-      el = el.parentElement;
+
+  function posAfter(map, index) {
+    for (let i = Math.min(index, map.length - 1); i >= 0; i--) {
+      if (map[i]) return { node: map[i].node, offset: map[i].offset + 1 };
     }
-    return el;
+    return null;
+  }
+  function posBefore(map, index) {
+    for (let i = Math.max(index, 0); i < map.length; i++) {
+      if (map[i]) return { node: map[i].node, offset: map[i].offset };
+    }
+    return null;
+  }
+  function deepestBlock(node, root) {
+    let el = node.nodeType === 3 ? node.parentElement : node;
+    while (el && el !== root && !SYNC_BLOCK_TAGS.test(el.tagName)) el = el.parentElement;
+    return el && el !== root ? el : null;
+  }
+
+  // One <div> per line and <div><br></div> for a blank one — this is what
+  // keeps the user's Enter presses visible in the HTML version.
+  function linesToBlocks(lines, doc) {
+    const frag = doc.createDocumentFragment();
+    lines.forEach(line => {
+      const div = doc.createElement('div');
+      if (line.trim() === '') div.appendChild(doc.createElement('br'));
+      else div.textContent = line;
+      frag.appendChild(div);
+    });
+    return frag;
+  }
+  // Inside a paragraph the plain-text line breaks are only soft wrapping,
+  // not real breaks, so the lines rejoin with spaces. The leading space
+  // keeps the insert from fusing onto the word in front of it; HTML
+  // collapses it if one is already there.
+  function linesToInline(lines, doc) {
+    const frag = doc.createDocumentFragment();
+    const text = lines.filter(l => l.trim() !== '').join(' ');
+    if (text) frag.appendChild(doc.createTextNode(' ' + text));
+    return frag;
+  }
+
+  // The edited region always ends on a line boundary, so its split leaves
+  // one empty trailing entry that is punctuation, not a blank line.
+  function regionLines(middle) {
+    const lines = middle.split('\n');
+    if (lines.length && lines[lines.length - 1] === '') lines.pop();
+    return lines;
+  }
+
+  function removeEmptyBlocks(root) {
+    Array.from(root.querySelectorAll('*')).forEach(el => {
+      if (SYNC_BLOCK_TAGS.test(el.tagName) && el.childNodes.length === 0) el.remove();
+    });
   }
 
   function syncTextEditIntoHtml() {
     const oldText = state.originalText || '';
     const newText = state.text || '';
-    if (oldText === newText || !state.html) return false;
+    if (!state.html || oldText === newText) return false;
 
-    const prefixLen = commonPrefixLen(oldText, newText);
-    const suffixLen = commonSuffixLen(oldText, newText, oldText.length - prefixLen, newText.length - prefixLen);
-    const oldMiddle = oldText.slice(prefixLen, oldText.length - suffixLen);
-    const newMiddle = newText.slice(prefixLen, newText.length - suffixLen);
-    if (oldMiddle === newMiddle || !newMiddle.trim()) return false;
+    const diff = diffLineRegion(oldText, newText);
+    if (diff.oldMiddle === diff.newMiddle) return false;
 
-    const container = document.createElement('div');
-    container.innerHTML = state.html;
-    const { nodes, flat } = getTextNodesFlat(container);
-
-    const ANCHOR_LEN = 30;
-    const anchorBefore = oldText.slice(0, prefixLen).trim().slice(-ANCHOR_LEN);
-    const anchorAfter = oldText.slice(oldText.length - suffixLen).trim().slice(0, ANCHOR_LEN);
-
-    let insertAfterNode = null, insertBeforeNode = null;
-    if (anchorBefore) {
-      const idx = flat.lastIndexOf(anchorBefore);
-      if (idx !== -1) insertAfterNode = findNodeAtFlatIndex(nodes, idx + anchorBefore.length - 1);
-    }
-    if (!insertAfterNode && anchorAfter) {
-      const idx = flat.indexOf(anchorAfter);
-      if (idx !== -1) insertBeforeNode = findNodeAtFlatIndex(nodes, idx);
-    }
-
-    const paragraphs = newMiddle.split(/\n{2,}/).map(p => p.trim()).filter(Boolean);
-    if (!paragraphs.length) return false;
-    const wrapper = document.createElement('div');
-    wrapper.innerHTML = paragraphs.map(p => '<div>' + escapeHtml(p).replace(/\n/g, '<br>') + '</div>').join('');
-    const newNodes = Array.from(wrapper.childNodes);
-
-    if (insertAfterNode) {
-      const anchorEl = blockAncestor(insertAfterNode, container);
-      const parent = (anchorEl && anchorEl.parentNode) || container;
-      const ref = anchorEl ? anchorEl.nextSibling : null;
-      newNodes.forEach(n => parent.insertBefore(n, ref));
-    } else if (insertBeforeNode) {
-      const anchorEl = blockAncestor(insertBeforeNode, container);
-      const parent = (anchorEl && anchorEl.parentNode) || container;
-      newNodes.forEach(n => parent.insertBefore(n, anchorEl));
+    const isFullDoc = /<(html|body)[\s>]/i.test(state.html);
+    const hadDoctype = /^\s*<!doctype/i.test(state.html);
+    let doc, container;
+    if (isFullDoc) {
+      doc = new DOMParser().parseFromString(state.html, 'text/html');
+      container = doc.body;
     } else {
-      newNodes.forEach(n => container.appendChild(n));
+      doc = document;
+      container = doc.createElement('div');
+      container.innerHTML = state.html;
     }
 
-    state.html = container.innerHTML;
-    state.originalText = state.text; // rebase so re-exporting doesn't duplicate
+    const flatData = flattenHtml(container);
+    const newLines = regionLines(diff.newMiddle);
+    const region = locateRegion(
+      flatData.flat,
+      buildAnchor(oldText.slice(0, diff.start), true),
+      buildAnchor(oldText.slice(diff.oldEnd), false)
+    );
+
+    if (!region) {
+      if (!newLines.length) return false;
+      container.appendChild(linesToBlocks(newLines, doc));
+      return commitSyncedHtml(container, doc, isFullDoc, hadDoctype);
+    }
+
+    const startPos = region.start > 0
+      ? posAfter(flatData.map, region.start - 1)
+      : posBefore(flatData.map, 0);
+    const endPos = region.end < flatData.flat.length
+      ? posBefore(flatData.map, region.end)
+      : posAfter(flatData.map, flatData.map.length - 1);
+    if (!startPos || !endPos) return false;
+
+    // A "\n" in or beside the region means the edit occupies whole lines,
+    // so it becomes block elements. Without one, the edit lands inside a
+    // paragraph that the plain-text part had merely soft-wrapped, and it
+    // rejoins that paragraph as inline text. A blank line in what the
+    // user typed always means a new paragraph, whichever side it is on.
+    const atBreak = newLines.some(l => l.trim() === '')
+      || flatData.flat.slice(region.start, region.end).indexOf('\n') !== -1
+      || flatData.flat[region.start - 1] === '\n'
+      || flatData.flat[region.start] === '\n'
+      || region.start === 0
+      || region.start >= flatData.flat.length;
+
+    const refBlock = atBreak ? deepestBlock(startPos.node, container) : null;
+
+    if (diff.oldMiddle !== '') {
+      const range = doc.createRange();
+      range.setStart(startPos.node, startPos.offset);
+      range.setEnd(endPos.node, endPos.offset);
+      range.deleteContents();
+      removeEmptyBlocks(container);
+      if (newLines.length && !atBreak) {
+        range.insertNode(linesToInline(newLines, doc));
+        return commitSyncedHtml(container, doc, isFullDoc, hadDoctype);
+      }
+    }
+
+    if (newLines.length) {
+      if (atBreak && refBlock && refBlock.parentNode) {
+        const frag = linesToBlocks(newLines, doc);
+        refBlock.parentNode.insertBefore(frag, region.start === 0 ? refBlock : refBlock.nextSibling);
+      } else if (atBreak) {
+        container.appendChild(linesToBlocks(newLines, doc));
+      } else {
+        const range = doc.createRange();
+        range.setStart(startPos.node, startPos.offset);
+        range.setEnd(startPos.node, startPos.offset);
+        range.insertNode(linesToInline(newLines, doc));
+      }
+    }
+
+    return commitSyncedHtml(container, doc, isFullDoc, hadDoctype);
+  }
+
+  function commitSyncedHtml(container, doc, isFullDoc, hadDoctype) {
+    state.html = isFullDoc
+      ? (hadDoctype ? '<!DOCTYPE html>\n' : '') + doc.documentElement.outerHTML
+      : container.innerHTML;
+    state.originalText = state.text; // rebase so re-syncing can't duplicate
     return true;
   }
+  // ==== SYNC-CORE-END ====
 
   // ---------- Export ----------
 

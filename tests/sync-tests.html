@@ -1,0 +1,493 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>sync core tests</title>
+<style>body{font:13px ui-monospace,monospace;padding:16px;white-space:pre-wrap}</style>
+<pre id="out">running...</pre>
+<script>
+(function () {
+  const state = { html: '', text: '', originalText: '' };
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  }
+
+  // ---------- Replay a Plain text edit into the HTML version ----------
+  // A message that carries both parts is shown by its HTML one in nearly
+  // every mail client, so an edit made only in the Plain text tab is
+  // never seen unless it is replayed into the HTML.
+  //
+  // How it works: diff the old and new plain text, widened out to whole
+  // lines, then find that same place in the HTML by matching the
+  // unchanged lines on either side of the edit. Matching runs against a
+  // flattened, whitespace-normalized view of the HTML that remembers the
+  // DOM position behind every character, so the edit is applied as a real
+  // DOM range instead of by string surgery.
+
+  const SYNC_BLOCK_TAGS = /^(ADDRESS|ARTICLE|ASIDE|BLOCKQUOTE|DD|DIV|DL|DT|FIELDSET|FIGCAPTION|FIGURE|FOOTER|FORM|H[1-6]|HEADER|HR|LI|MAIN|NAV|OL|P|PRE|SECTION|TABLE|TBODY|TD|TFOOT|TH|THEAD|TR|UL)$/;
+  const SYNC_SKIP_TAGS = /^(SCRIPT|STYLE|HEAD|META|LINK|TITLE)$/;
+
+  function commonPrefixLen(a, b) {
+    const max = Math.min(a.length, b.length);
+    let i = 0;
+    while (i < max && a[i] === b[i]) i++;
+    return i;
+  }
+  function commonSuffixLen(a, b, limitA, limitB) {
+    const max = Math.min(limitA, limitB);
+    let i = 0;
+    while (i < max && a[a.length - 1 - i] === b[b.length - 1 - i]) i++;
+    return i;
+  }
+
+  // Collapse every whitespace run (&nbsp; included) to a single space,
+  // the way a browser renders it, so plain-text anchors and HTML text
+  // compare character for character.
+  function normalizeInline(s) {
+    return s.replace(/[\s\u00a0]+/g, ' ').trim();
+  }
+
+  // Widen the raw character diff out to whole lines. A diff that starts
+  // or ends mid-line produces anchors containing line breaks, which match
+  // nothing, and inserts half-lines where a full one was meant.
+  function diffLineRegion(oldText, newText) {
+    let start = commonPrefixLen(oldText, newText);
+    while (start > 0 && oldText[start - 1] !== '\n') start--;
+
+    const suffix = commonSuffixLen(oldText, newText, oldText.length - start, newText.length - start);
+    let oldEnd = oldText.length - suffix;
+    while (oldEnd > 0 && oldEnd < oldText.length && oldText[oldEnd - 1] !== '\n') oldEnd++;
+    const newEnd = newText.length - (oldText.length - oldEnd);
+
+    return {
+      start: start,
+      oldEnd: oldEnd,
+      oldMiddle: oldText.slice(start, oldEnd),
+      newMiddle: newText.slice(start, newEnd)
+    };
+  }
+
+  // Build a match anchor from the whole lines next to the edit. A short
+  // line ("Jack,") recurs all through a quoted thread, so keep adding
+  // neighbouring lines until the anchor is distinctive enough to trust.
+  function buildAnchor(text, fromEnd) {
+    const lines = text.split('\n').filter(l => l.trim() !== '');
+    const picked = [];
+    let anchor = '';
+    for (let i = 0; i < lines.length && i < 3; i++) {
+      const line = fromEnd ? lines[lines.length - 1 - i] : lines[i];
+      if (fromEnd) picked.unshift(line); else picked.push(line);
+      anchor = normalizeInline(picked.join(' '));
+      if (anchor.length >= 25) break;
+    }
+    return anchor;
+  }
+
+  // Flatten HTML into text as it reads on screen, recording the DOM
+  // position behind every character. Block edges and <br> become "\n", so
+  // a line break in the plain-text part lines up with a real break in the
+  // HTML rather than fusing two lines into one unmatchable string.
+  function flattenHtml(root) {
+    let flat = '';
+    const map = [];
+
+    function pushChar(ch, node, offset) {
+      if (ch === ' ') {
+        const prev = flat.length ? flat[flat.length - 1] : '';
+        if (prev === '' || prev === ' ' || prev === '\n') return;
+      } else if (ch === '\n') {
+        while (flat.length && flat[flat.length - 1] === ' ') {
+          flat = flat.slice(0, -1);
+          map.pop();
+        }
+        const prev = flat.length ? flat[flat.length - 1] : '';
+        if (prev === '' || prev === '\n') return;
+      }
+      flat += ch;
+      map.push(ch === '\n' ? null : { node: node, offset: offset });
+    }
+
+    (function walk(node) {
+      for (let child = node.firstChild; child; child = child.nextSibling) {
+        if (child.nodeType === 3) {
+          const text = child.nodeValue;
+          for (let i = 0; i < text.length; i++) {
+            const c = text[i];
+            pushChar(/[\s\u00a0]/.test(c) ? ' ' : c, child, i);
+          }
+        } else if (child.nodeType === 1) {
+          const tag = child.tagName;
+          if (SYNC_SKIP_TAGS.test(tag)) continue;
+          if (tag === 'BR') { pushChar('\n'); continue; }
+          const isBlock = SYNC_BLOCK_TAGS.test(tag);
+          if (isBlock) pushChar('\n');
+          walk(child);
+          if (isBlock) pushChar('\n');
+        }
+      }
+    })(root);
+
+    return { flat: flat, map: map };
+  }
+
+  function allIndexesOf(hay, needle) {
+    const out = [];
+    if (!needle) return out;
+    let i = hay.indexOf(needle);
+    while (i !== -1) { out.push(i); i = hay.indexOf(needle, i + 1); }
+    return out;
+  }
+
+  // Find the stretch of flattened HTML that the edit belongs in. Both
+  // anchors are matched and the closest valid pair wins, which keeps the
+  // edit out of the quoted copy of the same text further down a thread.
+  function locateRegion(flat, beforeAnchor, afterAnchor) {
+    const search = flat.replace(/\n/g, ' '); // same length, so indexes still line up
+    const befores = allIndexesOf(search, beforeAnchor).map(i => i + beforeAnchor.length);
+    const afters = allIndexesOf(search, afterAnchor);
+
+    if (beforeAnchor && afterAnchor && befores.length && afters.length) {
+      let best = null;
+      for (const b of befores) {
+        for (const a of afters) {
+          if (a < b) continue;
+          if (!best || a - b < best.end - best.start) best = { start: b, end: a };
+        }
+      }
+      if (best) return best;
+    }
+    // Only one side matched: insert at that point, but never delete a
+    // range whose far end could not be located.
+    if (beforeAnchor && befores.length) {
+      // No anchor after the edit means it runs to the end of the message,
+      // so bind to the LAST copy of the preceding text — binding to the
+      // first one would drop the edit into the middle of the message.
+      const start = afterAnchor ? befores[0] : befores[befores.length - 1];
+      return { start: start, end: afterAnchor ? start : flat.length };
+    }
+    if (afters.length) {
+      return { start: beforeAnchor ? afters[0] : 0, end: afters[0] };
+    }
+    return null;
+  }
+
+  function posAfter(map, index) {
+    for (let i = Math.min(index, map.length - 1); i >= 0; i--) {
+      if (map[i]) return { node: map[i].node, offset: map[i].offset + 1 };
+    }
+    return null;
+  }
+  function posBefore(map, index) {
+    for (let i = Math.max(index, 0); i < map.length; i++) {
+      if (map[i]) return { node: map[i].node, offset: map[i].offset };
+    }
+    return null;
+  }
+  function deepestBlock(node, root) {
+    let el = node.nodeType === 3 ? node.parentElement : node;
+    while (el && el !== root && !SYNC_BLOCK_TAGS.test(el.tagName)) el = el.parentElement;
+    return el && el !== root ? el : null;
+  }
+
+  // One <div> per line and <div><br></div> for a blank one — this is what
+  // keeps the user's Enter presses visible in the HTML version.
+  function linesToBlocks(lines, doc) {
+    const frag = doc.createDocumentFragment();
+    lines.forEach(line => {
+      const div = doc.createElement('div');
+      if (line.trim() === '') div.appendChild(doc.createElement('br'));
+      else div.textContent = line;
+      frag.appendChild(div);
+    });
+    return frag;
+  }
+  // Inside a paragraph the plain-text line breaks are only soft wrapping,
+  // not real breaks, so the lines rejoin with spaces. The leading space
+  // keeps the insert from fusing onto the word in front of it; HTML
+  // collapses it if one is already there.
+  function linesToInline(lines, doc) {
+    const frag = doc.createDocumentFragment();
+    const text = lines.filter(l => l.trim() !== '').join(' ');
+    if (text) frag.appendChild(doc.createTextNode(' ' + text));
+    return frag;
+  }
+
+  // The edited region always ends on a line boundary, so its split leaves
+  // one empty trailing entry that is punctuation, not a blank line.
+  function regionLines(middle) {
+    const lines = middle.split('\n');
+    if (lines.length && lines[lines.length - 1] === '') lines.pop();
+    return lines;
+  }
+
+  function removeEmptyBlocks(root) {
+    Array.from(root.querySelectorAll('*')).forEach(el => {
+      if (SYNC_BLOCK_TAGS.test(el.tagName) && el.childNodes.length === 0) el.remove();
+    });
+  }
+
+  function syncTextEditIntoHtml() {
+    const oldText = state.originalText || '';
+    const newText = state.text || '';
+    if (!state.html || oldText === newText) return false;
+
+    const diff = diffLineRegion(oldText, newText);
+    if (diff.oldMiddle === diff.newMiddle) return false;
+
+    const isFullDoc = /<(html|body)[\s>]/i.test(state.html);
+    const hadDoctype = /^\s*<!doctype/i.test(state.html);
+    let doc, container;
+    if (isFullDoc) {
+      doc = new DOMParser().parseFromString(state.html, 'text/html');
+      container = doc.body;
+    } else {
+      doc = document;
+      container = doc.createElement('div');
+      container.innerHTML = state.html;
+    }
+
+    const flatData = flattenHtml(container);
+    const newLines = regionLines(diff.newMiddle);
+    const region = locateRegion(
+      flatData.flat,
+      buildAnchor(oldText.slice(0, diff.start), true),
+      buildAnchor(oldText.slice(diff.oldEnd), false)
+    );
+
+    if (!region) {
+      if (!newLines.length) return false;
+      container.appendChild(linesToBlocks(newLines, doc));
+      return commitSyncedHtml(container, doc, isFullDoc, hadDoctype);
+    }
+
+    const startPos = region.start > 0
+      ? posAfter(flatData.map, region.start - 1)
+      : posBefore(flatData.map, 0);
+    const endPos = region.end < flatData.flat.length
+      ? posBefore(flatData.map, region.end)
+      : posAfter(flatData.map, flatData.map.length - 1);
+    if (!startPos || !endPos) return false;
+
+    // A "\n" in or beside the region means the edit occupies whole lines,
+    // so it becomes block elements. Without one, the edit lands inside a
+    // paragraph that the plain-text part had merely soft-wrapped, and it
+    // rejoins that paragraph as inline text. A blank line in what the
+    // user typed always means a new paragraph, whichever side it is on.
+    const atBreak = newLines.some(l => l.trim() === '')
+      || flatData.flat.slice(region.start, region.end).indexOf('\n') !== -1
+      || flatData.flat[region.start - 1] === '\n'
+      || flatData.flat[region.start] === '\n'
+      || region.start === 0
+      || region.start >= flatData.flat.length;
+
+    const refBlock = atBreak ? deepestBlock(startPos.node, container) : null;
+
+    if (diff.oldMiddle !== '') {
+      const range = doc.createRange();
+      range.setStart(startPos.node, startPos.offset);
+      range.setEnd(endPos.node, endPos.offset);
+      range.deleteContents();
+      removeEmptyBlocks(container);
+      if (newLines.length && !atBreak) {
+        range.insertNode(linesToInline(newLines, doc));
+        return commitSyncedHtml(container, doc, isFullDoc, hadDoctype);
+      }
+    }
+
+    if (newLines.length) {
+      if (atBreak && refBlock && refBlock.parentNode) {
+        const frag = linesToBlocks(newLines, doc);
+        refBlock.parentNode.insertBefore(frag, region.start === 0 ? refBlock : refBlock.nextSibling);
+      } else if (atBreak) {
+        container.appendChild(linesToBlocks(newLines, doc));
+      } else {
+        const range = doc.createRange();
+        range.setStart(startPos.node, startPos.offset);
+        range.setEnd(startPos.node, startPos.offset);
+        range.insertNode(linesToInline(newLines, doc));
+      }
+    }
+
+    return commitSyncedHtml(container, doc, isFullDoc, hadDoctype);
+  }
+
+  function commitSyncedHtml(container, doc, isFullDoc, hadDoctype) {
+    state.html = isFullDoc
+      ? (hadDoctype ? '<!DOCTYPE html>\n' : '') + doc.documentElement.outerHTML
+      : container.innerHTML;
+    state.originalText = state.text; // rebase so re-syncing can't duplicate
+    return true;
+  }
+  
+  try {
+
+const results = [];
+function check(name, cond, detail) {
+  results.push({ name: name, pass: !!cond, detail: cond ? '' : (detail || '') });
+}
+
+// A Gmail-shaped message: &nbsp; inside the paragraph, the body soft-wrapped
+// in the plain-text part but a single <div> in HTML, and a quoted copy of the
+// same sentences further down (the classic wrong-place trap).
+const HTML = '<div dir="ltr">'
+  + '<div>'
+  + '<div class="gd">Jack,</div>'
+  + '<div class="gd"><br></div>'
+  + '<div class="gd">Tenable Prerequisite AAA BBB CCC DDD&nbsp;EEE&nbsp;FFF GGG HHH</div>'
+  + '<br clear="all">'
+  + '</div>'
+  + '<div><div dir="ltr" class="gmail_signature"><div dir="ltr">'
+  + '<div><br></div><div>Best Regards,</div><div>Mr. Anusorn Sirichan</div>'
+  + '</div></div></div>'
+  + '<div class="gmail_quote">'
+  + '<div>---------- Forwarded message ---------</div>'
+  + '<div>Jack,</div>'
+  + '<div>Tenable Prerequisite AAA BBB CCC DDD EEE FFF GGG HHH</div>'
+  + '<div>Best Regards,</div>'
+  + '</div>'
+  + '</div>';
+
+const TEXT = [
+  'Jack,',
+  '',
+  'Tenable Prerequisite AAA BBB CCC',
+  'DDD EEE FFF GGG HHH',
+  '',
+  '',
+  'Best Regards,',
+  'Mr. Anusorn Sirichan',
+  '',
+  '---------- Forwarded message ---------',
+  'Jack,',
+  'Tenable Prerequisite AAA BBB CCC DDD EEE FFF GGG HHH',
+  'Best Regards,',
+  ''
+].join('\n');
+
+function run(newText, html, oldText) {
+  state.html = html === undefined ? HTML : html;
+  state.originalText = oldText === undefined ? TEXT : oldText;
+  state.text = newText;
+  const changed = syncTextEditIntoHtml();
+  return { changed: changed, html: state.html };
+}
+const at = (h, s) => h.indexOf(s);
+
+// 1. Blank lines survive, and the insert lands in the live body — above the
+//    signature and nowhere near the quoted copy.
+(function () {
+  const t = TEXT.replace('Best Regards,\nMr. Anusorn Sirichan',
+                         'test12345\n\nBest Regards,\nMr. Anusorn Sirichan');
+  const r = run(t);
+  check('1a insert applied', r.changed && at(r.html, 'test12345') !== -1, r.html);
+  check('1b wrapped in its own div', at(r.html, '<div>test12345</div>') !== -1, r.html);
+  check('1c after the body paragraph', at(r.html, 'test12345') > at(r.html, 'GGG HHH'), r.html);
+  check('1d before the signature', at(r.html, 'test12345') < at(r.html, 'Best Regards,'), r.html);
+  check('1e not in the quoted copy', at(r.html, 'test12345') < at(r.html, 'Forwarded message'), r.html);
+  check('1f body text intact', at(r.html, 'Tenable Prerequisite AAA BBB CCC DDD') !== -1, r.html);
+})();
+
+// 2. A blank line between two typed lines becomes a real blank line.
+(function () {
+  const t = TEXT.replace('Best Regards,\nMr.', 'A1\n\nB2\n\nBest Regards,\nMr.');
+  const r = run(t);
+  check('2a both lines present', at(r.html, '<div>A1</div>') !== -1 && at(r.html, '<div>B2</div>') !== -1, r.html);
+  check('2b blank line kept between them',
+        at(r.html, '<div>A1</div><div><br></div><div>B2</div>') !== -1, r.html);
+})();
+
+// 3. Several consecutive blank lines are all kept.
+(function () {
+  const t = TEXT.replace('Best Regards,\nMr.', 'X1\n\n\n\nY2\n\nBest Regards,\nMr.');
+  const r = run(t);
+  check('3a three blank divs between X1 and Y2',
+        at(r.html, '<div>X1</div><div><br></div><div><br></div><div><br></div><div>Y2</div>') !== -1, r.html);
+})();
+
+// 4. Editing a line replaces it instead of duplicating it.
+(function () {
+  const t = TEXT.replace('Mr. Anusorn Sirichan', 'Mr. Anusorn S.');
+  const r = run(t);
+  const olds = (r.html.match(/Anusorn Sirichan/g) || []).length;
+  check('4a new text present', at(r.html, 'Mr. Anusorn S.') !== -1, r.html);
+  check('4b old line gone (no duplicate)', olds === 0, 'occurrences=' + olds + ' :: ' + r.html);
+})();
+
+// 5. Deleting a line removes it from the HTML.
+(function () {
+  const t = TEXT.replace('Best Regards,\nMr. Anusorn Sirichan', 'Best Regards,');
+  const r = run(t);
+  check('5a line removed', (r.html.match(/Anusorn Sirichan/g) || []).length === 0, r.html);
+  check('5b neighbour kept', at(r.html, 'Best Regards,') !== -1, r.html);
+})();
+
+// 6. An edit at the very end of the message appends at the end.
+(function () {
+  const t = TEXT + 'TAILLINE\n';
+  const r = run(t);
+  check('6a appended', at(r.html, 'TAILLINE') !== -1, r.html);
+  check('6b after everything else', at(r.html, 'TAILLINE') > at(r.html, 'Forwarded message'), r.html);
+})();
+
+// 7. An edit at the very start goes in before the first line.
+(function () {
+  const t = 'HEADLINE\n\n' + TEXT;
+  const r = run(t);
+  check('7a inserted', at(r.html, 'HEADLINE') !== -1, r.html);
+  check('7b before the first line', at(r.html, 'HEADLINE') < at(r.html, 'Jack,'), r.html);
+})();
+
+// 8. A line typed inside a soft-wrapped paragraph rejoins that paragraph
+//    instead of splitting the <div> apart.
+(function () {
+  const t = TEXT.replace('AAA BBB CCC\nDDD EEE FFF', 'AAA BBB CCC\nINLINEX\nDDD EEE FFF');
+  const r = run(t);
+  const div = (r.html.match(/<div class="gd">Tenable[^<]*<\/div>/) || [''])[0];
+  check('8a inserted', at(r.html, 'INLINEX') !== -1, r.html);
+  check('8b stayed inside the paragraph div', div.indexOf('INLINEX') !== -1, div || r.html);
+  check('8c paragraph not fused into a word',
+        /CCC INLINEX/.test(r.html) && /INLINEX DDD/.test(r.html.replace(/&nbsp;/g, ' ')), div || r.html);
+})();
+
+// 9. Syncing again with nothing newly typed is a no-op (no duplicates).
+(function () {
+  const t = TEXT.replace('Best Regards,\nMr.', 'ONCE\n\nBest Regards,\nMr.');
+  const first = run(t);
+  state.text = t; // same text, user pressed the button again
+  const again = syncTextEditIntoHtml();
+  const count = (state.html.match(/ONCE/g) || []).length;
+  check('9a second run is a no-op', again === false, 'returned ' + again);
+  check('9b inserted exactly once', count === 1, 'occurrences=' + count);
+})();
+
+// 10. The anchor still matches across &nbsp; in the HTML.
+(function () {
+  const t = TEXT.replace('DDD EEE FFF GGG HHH\n', 'DDD EEE FFF GGG HHH\n\nNBSPOK\n');
+  const r = run(t);
+  check('10a anchored past &nbsp;', at(r.html, 'NBSPOK') !== -1, r.html);
+  check('10b landed in the live body, not the quote',
+        at(r.html, 'NBSPOK') !== -1 && at(r.html, 'NBSPOK') < at(r.html, 'Forwarded message'), r.html);
+})();
+
+// 11. A full HTML document keeps its <html>/<body> wrapper.
+(function () {
+  const doc = '<html><head><meta charset="utf-8"></head><body><div>Jack,</div>'
+    + '<div>Tenable Prerequisite AAA BBB CCC DDD EEE FFF GGG HHH</div>'
+    + '<div>Best Regards,</div></body></html>';
+  const shortText = 'Jack,\nTenable Prerequisite AAA BBB CCC DDD EEE FFF GGG HHH\nBest Regards,\n';
+  const t = shortText.replace('Best Regards,', 'DOCLINE\n\nBest Regards,');
+  const r = run(t, doc, shortText);
+  check('11a inserted', at(r.html, 'DOCLINE') !== -1, r.html);
+  check('11b body wrapper preserved', /<body[\s>]/i.test(r.html), r.html);
+})();
+
+const failed = results.filter(r => !r.pass);
+document.getElementById('out').textContent =
+  'PASS ' + (results.length - failed.length) + '/' + results.length + '\n\n'
+  + results.map(r => (r.pass ? 'ok   ' : 'FAIL ') + r.name + (r.pass ? '' : '\n       ' + r.detail)).join('\n');
+window.__testSummary = { total: results.length, failed: failed.length, failures: failed };
+
+  } catch (e) {
+    document.getElementById('out').textContent = 'THREW: ' + (e && e.stack || e);
+    window.__testSummary = { total: 0, failed: 1, failures: [{ name: 'exception', detail: String(e) }] };
+  }
+})();
+</script>
