@@ -204,6 +204,13 @@
   }
   .attachlist .aname { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .attachlist .asize { color: var(--muted); font-family: "IBM Plex Mono", monospace; font-size: 0.72rem; }
+  .attachlist .adel {
+    border: 0; background: transparent; color: var(--faint);
+    padding: 2px 4px; font-size: 0.95rem; line-height: 1; border-radius: 4px;
+  }
+  .attachlist .adel:hover { background: var(--danger-soft); color: var(--danger); }
+  .attachlist .adel:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .attach-empty { font-size: 0.78rem; color: var(--faint); }
 
   .empty-state {
     padding: 60px 24px;
@@ -331,8 +338,10 @@
       </div>
 
       <div id="attachWrap" style="display:none;">
-        <p class="section-label">Attachments (kept on export)</p>
+        <p class="section-label" id="attachLabel">Attachments</p>
         <ul class="attachlist" id="attachList"></ul>
+        <button class="ghost" id="btnAddAttach" style="margin-top:8px; width:100%; font-size:0.8rem; padding:7px 10px;">Add file</button>
+        <input type="file" id="attachInput" multiple>
       </div>
     </aside>
 
@@ -377,6 +386,13 @@
   fileInput.addEventListener('change', e => {
     const f = e.target.files[0];
     if (f) loadFile(f);
+  });
+
+  const attachInput = document.getElementById('attachInput');
+  document.getElementById('btnAddAttach').addEventListener('click', () => attachInput.click());
+  attachInput.addEventListener('change', e => {
+    addAttachmentFiles(e.target.files);
+    e.target.value = ''; // so the same file can be attached again
   });
 
   document.getElementById('btnNew').addEventListener('click', () => {
@@ -425,6 +441,7 @@
         fmeta.textContent = formatBytes(file.size) + ' · loaded ' + new Date().toLocaleTimeString();
         fileMeta.style.display = 'block';
         topActions.style.display = 'flex';
+        attachWrap.style.display = 'block'; // files can be added even when it arrived with none
         showToast('Message loaded');
       } catch (err) {
         alert('Could not parse this file as a valid .eml message.\n\n' + err.message);
@@ -662,13 +679,90 @@
   }
 
   function renderAttachments() {
-    if (!state.attachments.length) { attachWrap.style.display = 'none'; return; }
-    attachWrap.style.display = 'block';
-    attachList.innerHTML = state.attachments.map(a => `
-      <li>
-        <span class="aname" title="${escapeHtml(a.filename)}">${escapeHtml(a.filename)}</span>
-        <span class="asize">${formatBytes(a.size)}</span>
-      </li>`).join('');
+    const list = state.attachments;
+    document.getElementById('attachLabel').textContent =
+      list.length ? 'Attachments (' + list.length + ')' : 'Attachments';
+
+    attachList.innerHTML = list.length
+      ? list.map((a, i) => `
+        <li>
+          <span class="aname" title="${escapeHtml(a.filename)}">${escapeHtml(a.filename)}</span>
+          <span class="asize">${formatBytes(a.size)}</span>
+          <button class="adel" data-index="${i}" title="Remove ${escapeHtml(a.filename)}" aria-label="Remove ${escapeHtml(a.filename)}">×</button>
+        </li>`).join('')
+      : '<li class="attach-empty">No files attached</li>';
+
+    attachList.querySelectorAll('.adel').forEach(btn => {
+      btn.addEventListener('click', () => removeAttachment(Number(btn.dataset.index)));
+    });
+  }
+
+  function removeAttachment(index) {
+    const a = state.attachments[index];
+    if (!a) return;
+    if (!confirm('Remove "' + a.filename + '" from this message?')) return;
+    state.attachments.splice(index, 1);
+    renderAttachments();
+    showToast('Removed ' + a.filename);
+  }
+
+  // ---------- Adding attachments ----------
+
+  // btoa needs a chunk size divisible by 3, or it pads mid-stream and
+  // corrupts the data.
+  function bytesToBase64(bytes) {
+    let out = '';
+    const chunk = 30000;
+    for (let i = 0; i < bytes.length; i += chunk) {
+      out += btoa(String.fromCharCode.apply(null, bytes.subarray(i, i + chunk)));
+    }
+    return out;
+  }
+
+  // A non-ASCII filename goes in twice: a stripped-down name= for old
+  // clients, and RFC 2231's filename*= carrying the real UTF-8 one.
+  function filenameParams(name) {
+    const ascii = name.replace(/[^\x20-\x7e]/g, '_').replace(/"/g, "'");
+    const needsUtf8 = /[^\x00-\x7f]/.test(name);
+    return {
+      ascii: ascii,
+      star: needsUtf8 ? "; filename*=UTF-8''" + encodeURIComponent(name) : ''
+    };
+  }
+
+  function buildAttachmentPart(filename, mime, bytes) {
+    const nameParams = filenameParams(filename);
+    const body = (bytesToBase64(bytes).match(/.{1,76}/g) || []).join('\r\n');
+    return [
+      'Content-Type: ' + (mime || 'application/octet-stream') + '; name="' + nameParams.ascii + '"',
+      'Content-Disposition: attachment; filename="' + nameParams.ascii + '"' + nameParams.star,
+      'Content-Transfer-Encoding: base64'
+    ].join('\r\n') + '\r\n\r\n' + body;
+  }
+
+  function addAttachmentFiles(files) {
+    const pending = Array.from(files);
+    if (!pending.length) return;
+    let added = 0;
+    pending.forEach(file => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const bytes = new Uint8Array(reader.result);
+        state.attachments.push({
+          filename: file.name,
+          mime: file.type || 'application/octet-stream',
+          size: bytes.length,
+          raw: buildAttachmentPart(file.name, file.type, bytes)
+        });
+        added++;
+        renderAttachments();
+        if (added === pending.length) {
+          showToast(added === 1 ? 'Attached ' + file.name : 'Attached ' + added + ' files');
+        }
+      };
+      reader.onerror = () => showToast('Could not read ' + file.name);
+      reader.readAsArrayBuffer(file);
+    });
   }
 
   function escapeHtml(s) {
