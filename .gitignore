@@ -1,2 +1,3 @@
 # Generated from a real .eml — contains message content, keep it local
 tests/real-message-tests.html
+.DS_Store
