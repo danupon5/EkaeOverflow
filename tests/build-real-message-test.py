@@ -35,10 +35,13 @@ if not text or not html:
     sys.exit('message needs both a text/plain and a text/html part')
 
 src = open(SRC, encoding='utf-8').read()
-m = re.search(r'// ==== SYNC-CORE-START ====(.*?)// ==== SYNC-CORE-END ====', src, re.S)
-if not m:
-    sys.exit('SYNC-CORE markers not found in index.html')
-core = m.group(1)
+def extract(marker):
+    m = re.search(r'// ==== %s-START ====(.*?)// ==== %s-END ====' % (marker, marker), src, re.S)
+    if not m:
+        sys.exit('%s markers not found in index.html' % marker)
+    return m.group(1)
+
+core = extract('SYNC-CORE') + extract('TEXT-TIDY')
 
 fixture = json.dumps({'text': text, 'html': html}, ensure_ascii=False)
 
@@ -146,6 +149,25 @@ notes.push('body paragraph found in text: ' + (TEXT.indexOf(PARA_END) !== -1));
   check('5a thai text intact', at(r.html, thai) !== -1, r.html.slice(0, 200));
   check('5b placed in the live body', at(r.html, thai) < at(r.html, QUOTE) && at(r.html, thai) > at(r.html, PARA_END),
         'ins=' + at(r.html, thai));
+})();
+
+// 6. The quoted header block of this real message gets put back on one
+//    line per header, addresses intact.
+(function () {
+  const before = TEXT.split('\n').filter(l => /^Cc:/.test(l))[0] || '';
+  const fixed = unwrapQuotedHeaders(TEXT);
+  const after = fixed.split('\n').filter(l => /^Cc:/.test(l))[0] || '';
+  notes.push('Cc before: ' + JSON.stringify(before));
+  notes.push('Cc after : ' + JSON.stringify(after));
+
+  const addrs = (after.match(/<[^>]+@[^>]+>/g) || []);
+  check('6a Cc rejoined onto one line', after.length > before.length && after.indexOf('danupon.kaewmart') !== -1, after);
+  check('6b no address split by the wrap', !/<\s/.test(after) && after.indexOf('< ') === -1, after);
+  check('6c all five recipients on that line', addrs.length === 5, 'found ' + addrs.length + ': ' + addrs.join(' | '));
+  check('6d line count drops by the joins', fixed.split('\n').length < TEXT.split('\n').length,
+        fixed.split('\n').length + ' vs ' + TEXT.split('\n').length);
+  check('6e no content lost', fixed.replace(/[\s ]+/g, '') === TEXT.replace(/[\s ]+/g, ''),
+        'characters differ once whitespace is ignored');
 })();
 
 const failed = results.filter(r => !r.pass);

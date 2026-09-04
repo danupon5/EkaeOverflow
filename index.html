@@ -480,6 +480,46 @@
     return (n / (1024 * 1024)).toFixed(1) + ' MB';
   }
 
+  // ==== TEXT-TIDY-START ====
+  // Gmail and Outlook hard-wrap the plain-text part at around 72
+  // characters, which chops the header block of a quoted or forwarded
+  // message mid-value — a Cc list breaks between two people, and even
+  // inside an address ("Pimpich Swadwan <" / "pimpich.swadwan@..."). Put
+  // each of those headers back on the single line it is meant to be.
+
+  const QUOTED_HEADER = /^\s*\*?(From|To|Cc|Bcc|Sent|Date|Subject|Reply-To)\s*:\s*\*?/i;
+  // Only a line long enough to have hit the wrap width can be a wrapped
+  // one; a shorter line ended because the value ended.
+  const WRAP_MIN = 60;
+
+  function joinWrappedLine(left, right) {
+    const a = left.replace(/\s+$/, '');
+    const b = right.replace(/^\s+/, '');
+    // A break right after "<" or before ">" / "," split a single address,
+    // so those halves go back together with no space between them.
+    const glue = /[<([]$/.test(a) || /^[>)\],;.@]/.test(b) ? '' : ' ';
+    return a + glue + b;
+  }
+
+  function unwrapQuotedHeaders(text) {
+    const lines = text.split('\n');
+    const out = [];
+    for (let i = 0; i < lines.length; i++) {
+      let line = lines[i];
+      if (QUOTED_HEADER.test(line)) {
+        while (i + 1 < lines.length && line.length >= WRAP_MIN) {
+          const next = lines[i + 1];
+          if (next.trim() === '' || QUOTED_HEADER.test(next)) break;
+          line = joinWrappedLine(line, next);
+          i++;
+        }
+      }
+      out.push(line);
+    }
+    return out.join('\n');
+  }
+  // ==== TEXT-TIDY-END ====
+
   // ---------- MIME parsing (headers + text/html parts + attachment listing) ----------
 
   function splitHeadersBody(raw) {
@@ -598,7 +638,7 @@
       .filter(h => !isTransportHeader(h.name))
       .map(h => ({ name: h.name, value: decodeMimeWords(h.value) }));
 
-    state.text = parsed.text;
+    state.text = unwrapQuotedHeaders(parsed.text);
     state.html = parsed.html;
     state.hasHtml = !!parsed.html;
     state.activeTab = state.hasHtml ? 'html' : 'text';

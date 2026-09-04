@@ -317,6 +317,44 @@
     return true;
   }
   
+  // Gmail and Outlook hard-wrap the plain-text part at around 72
+  // characters, which chops the header block of a quoted or forwarded
+  // message mid-value — a Cc list breaks between two people, and even
+  // inside an address ("Pimpich Swadwan <" / "pimpich.swadwan@..."). Put
+  // each of those headers back on the single line it is meant to be.
+
+  const QUOTED_HEADER = /^\s*\*?(From|To|Cc|Bcc|Sent|Date|Subject|Reply-To)\s*:\s*\*?/i;
+  // Only a line long enough to have hit the wrap width can be a wrapped
+  // one; a shorter line ended because the value ended.
+  const WRAP_MIN = 60;
+
+  function joinWrappedLine(left, right) {
+    const a = left.replace(/\s+$/, '');
+    const b = right.replace(/^\s+/, '');
+    // A break right after "<" or before ">" / "," split a single address,
+    // so those halves go back together with no space between them.
+    const glue = /[<([]$/.test(a) || /^[>)\],;.@]/.test(b) ? '' : ' ';
+    return a + glue + b;
+  }
+
+  function unwrapQuotedHeaders(text) {
+    const lines = text.split('\n');
+    const out = [];
+    for (let i = 0; i < lines.length; i++) {
+      let line = lines[i];
+      if (QUOTED_HEADER.test(line)) {
+        while (i + 1 < lines.length && line.length >= WRAP_MIN) {
+          const next = lines[i + 1];
+          if (next.trim() === '' || QUOTED_HEADER.test(next)) break;
+          line = joinWrappedLine(line, next);
+          i++;
+        }
+      }
+      out.push(line);
+    }
+    return out.join('\n');
+  }
+  
   try {
 
 const results = [];
@@ -477,6 +515,77 @@ const at = (h, s) => h.indexOf(s);
   const r = run(t, doc, shortText);
   check('11a inserted', at(r.html, 'DOCLINE') !== -1, r.html);
   check('11b body wrapper preserved', /<body[\s>]/i.test(r.html), r.html);
+})();
+
+// 12. Header lines of a quoted/forwarded message, hard-wrapped by the
+//     sending client, are put back on one line — including breaks that
+//     landed inside an address.
+(function () {
+  const wrapped = [
+    '---------- Forwarded message ---------',
+    'From: Nattamon Thiengtham <nattamon.thiengtham@nttdata.com>',
+    'Date: Mon, Aug 24, 2026 at 11:16 AM',
+    'Subject: Re: Minebea | NTT | Tenable | Vulnerability Assessment for Internal',
+    'To: Anusorn Sirichan <anusorn.s@minebea.co.th>',
+    'Cc: Soipachara Mekalai <soipachara.mekalai@nttdata.com>, Thamrongchai',
+    'Chalowat <thamrongchai.chalowat@nttdata.com>, Pimpich Swadwan <',
+    'pimpich.swadwan@nttdata.com>, Patomphon Vimolket <',
+    'patomphon.vimolket@nttdata.com>, Danupon Kaewmart <',
+    'danupon.kaewmart@nttdata.com>',
+    '',
+    'Dear K. Anusorn,'
+  ].join('\n');
+  const fixed = unwrapQuotedHeaders(wrapped);
+  const lines = fixed.split('\n');
+  const cc = lines.filter(l => l.indexOf('Cc:') === 0)[0] || '';
+
+  check('12a Cc is one line', cc.indexOf('danupon.kaewmart@nttdata.com>') !== -1, cc);
+  check('12b no space broke an address',
+        cc.indexOf('< ') === -1 && !/<\s/.test(cc), cc);
+  check('12c every recipient kept',
+        ['soipachara.mekalai', 'thamrongchai.chalowat', 'pimpich.swadwan',
+         'patomphon.vimolket', 'danupon.kaewmart'].every(a => cc.indexOf(a + '@nttdata.com>') !== -1), cc);
+  check('12d names stayed attached to their address',
+        cc.indexOf('Pimpich Swadwan <pimpich.swadwan@nttdata.com>') !== -1
+        && cc.indexOf('Thamrongchai Chalowat <thamrongchai.chalowat@nttdata.com>') !== -1, cc);
+  check('12e body below the block untouched',
+        lines[lines.length - 1] === 'Dear K. Anusorn,' && lines[lines.length - 2] === '', JSON.stringify(lines.slice(-3)));
+  check('12f short headers left alone',
+        lines.indexOf('To: Anusorn Sirichan <anusorn.s@minebea.co.th>') !== -1
+        && lines.indexOf('Date: Mon, Aug 24, 2026 at 11:16 AM') !== -1, JSON.stringify(lines.slice(0, 6)));
+})();
+
+// 13. Outlook's *Header:* style, with ";" separators and a wrapped Subject.
+(function () {
+  const wrapped = [
+    '*From:* Danupon Kaewmart <danupon.kaewmart@global.ntt>',
+    '*Sent:* Thursday, August 13, 2026 11:44 AM',
+    '*To:* Nattamon Thiengtham <nattamon.thiengtham@global.ntt>; Anusorn',
+    'Sirichan <anusorn.s@minebea.co.th>',
+    '*Subject:* Re: Minebea | NTT | Tenable | Vulnerability Assessment for',
+    'Internal',
+    '',
+    "Dear P' Anusorn kub."
+  ].join('\n');
+  const lines = unwrapQuotedHeaders(wrapped).split('\n');
+  const to = lines.filter(l => l.indexOf('*To:*') === 0)[0] || '';
+  const subj = lines.filter(l => l.indexOf('*Subject:*') === 0)[0] || '';
+  check('13a To rejoined', to.indexOf('Anusorn Sirichan <anusorn.s@minebea.co.th>') !== -1, to);
+  check('13b Subject rejoined', subj.indexOf('Assessment for Internal') !== -1, subj);
+  check('13c body kept', lines[lines.length - 1] === "Dear P' Anusorn kub.", JSON.stringify(lines.slice(-2)));
+})();
+
+// 14. Ordinary body text that merely looks long is never rejoined.
+(function () {
+  const body = [
+    'Jack,',
+    '',
+    'Tenable Prerequisite AAA BBB CCC DDD EEE FFF GGG HHH III JJJ KKK LLL MMM',
+    'NNN OOO PPP',
+    '',
+    'Best Regards,'
+  ].join('\n');
+  check('14a body wrapping preserved', unwrapQuotedHeaders(body) === body, unwrapQuotedHeaders(body));
 })();
 
 const failed = results.filter(r => !r.pass);
