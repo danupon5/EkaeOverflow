@@ -638,10 +638,19 @@
       .filter(h => !isTransportHeader(h.name))
       .map(h => ({ name: h.name, value: decodeMimeWords(h.value) }));
 
-    state.text = unwrapQuotedHeaders(parsed.text);
+    // Normalize to LF immediately. A textarea always hands its value back
+    // with LF endings, so leaving the CRLF that real messages arrive with
+    // would make every single line read as changed the moment the user
+    // types, and the diff would rewrite the whole body instead of the one
+    // line they touched. Export puts CRLF back.
+    state.text = unwrapQuotedHeaders((parsed.text || '').replace(/\r\n?/g, '\n'));
     state.html = parsed.html;
     state.hasHtml = !!parsed.html;
-    state.activeTab = state.hasHtml ? 'html' : 'text';
+    // Always open on Plain text — it is the readable, editable side of the
+    // message. A message that carries only an HTML part gets a plain-text
+    // rendering of it so the tab is never empty.
+    if (!state.text && state.html) state.text = htmlToText(state.html);
+    state.activeTab = 'text';
     state.attachments = parsed.attachments;
     // Baseline for auto-syncing Plain text edits into the HTML version on
     // export (see syncTextEditIntoHtml). Rebased after each successful
@@ -753,10 +762,12 @@
   function textToHtml(t) {
     return '<html><body><p>' + escapeHtml(t).replace(/\n/g, '<br>') + '</p></body></html>';
   }
+  // textContent would run every block together into one endless line;
+  // flattening keeps the line breaks the message actually reads with.
   function htmlToText(h) {
     const div = document.createElement('div');
     div.innerHTML = h;
-    return div.textContent || div.innerText || '';
+    return flattenHtml(div).flat.trim();
   }
 
   function escapeAttr(s) { return escapeHtml(s || ''); }
@@ -970,9 +981,18 @@
     return lines;
   }
 
-  function removeEmptyBlocks(root) {
-    Array.from(root.querySelectorAll('*')).forEach(el => {
-      if (SYNC_BLOCK_TAGS.test(el.tagName) && el.childNodes.length === 0) el.remove();
+  // Deleting a range hollows out the blocks it passed through but leaves
+  // the elements — often holding an empty text node rather than nothing
+  // at all, so a childNodes check alone misses them. A block that still
+  // carries a <br> or an image is a deliberate blank line or content and
+  // stays. Only the blocks around the edit are considered, so empty
+  // markup elsewhere in the message is left exactly as it was.
+  function removeEmptyBlocks(scope) {
+    if (!scope) return;
+    Array.from(scope.querySelectorAll('div, p')).forEach(el => {
+      if (el.querySelector('br, img, hr, input, table, svg, object, video')) return;
+      if (el.textContent.trim() !== '') return;
+      el.remove();
     });
   }
 
@@ -1036,8 +1056,11 @@
       const range = doc.createRange();
       range.setStart(startPos.node, startPos.offset);
       range.setEnd(endPos.node, endPos.offset);
+      const touched = range.commonAncestorContainer.nodeType === 1
+        ? range.commonAncestorContainer
+        : range.commonAncestorContainer.parentElement;
       range.deleteContents();
-      removeEmptyBlocks(container);
+      removeEmptyBlocks(touched || container);
       if (newLines.length && !atBreak) {
         range.insertNode(linesToInline(newLines, doc));
         return commitSyncedHtml(container, doc, isFullDoc, hadDoctype);
@@ -1045,7 +1068,14 @@
     }
 
     if (newLines.length) {
-      if (atBreak && refBlock && refBlock.parentNode) {
+      // Anchor to the block the edit runs up against rather than the one
+      // it follows: the gap between them can hold blank-line divs, and
+      // going in ahead of the following block keeps those blanks on the
+      // side the user actually typed them.
+      const afterBlock = region.end < flatData.flat.length ? deepestBlock(endPos.node, container) : null;
+      if (atBreak && afterBlock && afterBlock.parentNode) {
+        afterBlock.parentNode.insertBefore(linesToBlocks(newLines, doc), afterBlock);
+      } else if (atBreak && refBlock && refBlock.parentNode) {
         const frag = linesToBlocks(newLines, doc);
         refBlock.parentNode.insertBefore(frag, region.start === 0 ? refBlock : refBlock.nextSibling);
       } else if (atBreak) {
@@ -1165,21 +1195,26 @@
     // either its own top-level part, or wrapped in multipart/alternative
     // if there's a header to prepend to (attachments present) or both
     // flavors exist.
+    // Bodies are held with LF while editing; MIME wants CRLF on the wire.
+    const toCrlf = s => (s || '').replace(/\r\n?/g, '\n').replace(/\n/g, '\r\n');
+    const textBody = toCrlf(state.text);
+    const htmlBody = toCrlf(state.html);
+
     let contentHeaders, contentBody;
     if (hasText && hasHtml) {
       const altBoundary = 'envelope-alt-' + Math.random().toString(36).slice(2);
       contentHeaders = 'Content-Type: multipart/alternative; boundary="' + altBoundary + '"';
       contentBody = '--' + altBoundary + '\r\n'
-        + 'Content-Type: text/plain; charset="utf-8"\r\n\r\n' + state.text + '\r\n\r\n'
+        + 'Content-Type: text/plain; charset="utf-8"\r\n\r\n' + textBody + '\r\n\r\n'
         + '--' + altBoundary + '\r\n'
-        + 'Content-Type: text/html; charset="utf-8"\r\n\r\n' + state.html + '\r\n\r\n'
+        + 'Content-Type: text/html; charset="utf-8"\r\n\r\n' + htmlBody + '\r\n\r\n'
         + '--' + altBoundary + '--';
     } else if (hasHtml) {
       contentHeaders = 'Content-Type: text/html; charset="utf-8"';
-      contentBody = state.html;
+      contentBody = htmlBody;
     } else {
       contentHeaders = 'Content-Type: text/plain; charset="utf-8"';
-      contentBody = state.text || '';
+      contentBody = textBody || '';
     }
 
     // Assemble as Blob parts rather than one big string: attachment bytes

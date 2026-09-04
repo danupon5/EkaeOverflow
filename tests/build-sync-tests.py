@@ -76,6 +76,13 @@ function run(newText, html, oldText) {
 }
 const at = (h, s) => h.indexOf(s);
 
+function roundTripBaseline(html) {
+  const d = document.createElement('div');
+  d.innerHTML = html;
+  return d.innerHTML;
+}
+
+
 // 1. Blank lines survive, and the insert lands in the live body — above the
 //    signature and nowhere near the quoted copy.
 (function () {
@@ -253,6 +260,43 @@ const at = (h, s) => h.indexOf(s);
     'Best Regards,'
   ].join('\n');
   check('14a body wrapping preserved', unwrapQuotedHeaders(body) === body, unwrapQuotedHeaders(body));
+})();
+
+// 15. The line-ending trap. A real message arrives with CRLF, but a
+//     textarea hands its value back with LF, so the two sides of the diff
+//     disagree on every line unless the text was normalized on load.
+//     Left unhandled, the diff concludes the whole body changed and
+//     rebuilds it, scattering the message.
+(function () {
+  const crlf = TEXT.replace(/\n/g, '\r\n');          // as parsed from the wire
+  const edited = TEXT.replace('Best Regards,\nMr.', 'CRLFCHECK\n\nBest Regards,\nMr.'); // as typed
+
+  // Simulating what index.html now does on load: normalize, then diff.
+  const normalized = crlf.replace(/\r\n?/g, '\n');
+  state.html = HTML;
+  state.originalText = normalized;
+  state.text = edited;
+  const changed = syncTextEditIntoHtml();
+  const html = state.html;
+
+  check('15a applied', changed && (html.match(/CRLFCHECK/g) || []).length === 1,
+        'occurrences=' + (html.match(/CRLFCHECK/g) || []).length);
+  check('15b surgical, not a rebuild',
+        html.replace('<div>CRLFCHECK</div><div><br></div>', '') === roundTripBaseline(HTML),
+        'html length ' + html.length);
+  check('15c nothing was reordered',
+        html.indexOf('Jack,') < html.indexOf('GGG HHH')
+        && html.indexOf('GGG HHH') < html.indexOf('CRLFCHECK')
+        && html.indexOf('CRLFCHECK') < html.indexOf('Mr. Anusorn Sirichan'), html.slice(0, 220));
+
+  // Without the normalization the diff blows up — proving the guard matters.
+  state.html = HTML;
+  state.originalText = crlf;   // the un-normalized form
+  state.text = edited;
+  syncTextEditIntoHtml();
+  check('15d un-normalized input is what used to break it',
+        state.html.replace('<div>CRLFCHECK</div><div><br></div>', '') !== roundTripBaseline(HTML),
+        'expected the un-normalized case to differ from a clean insert');
 })();
 
 const failed = results.filter(r => !r.pass);
